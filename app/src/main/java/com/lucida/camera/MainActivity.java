@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        useWholeScreen(this);
         // 键盘弹出时窗口不被缩小、网页不被挤压（网页容器是固定大小）；键盘高度另外量出来告诉网页
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
         root = new FrameLayout(this);
@@ -97,6 +98,17 @@ public class MainActivity extends Activity {
         if (!has(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO);
         if (Build.VERSION.SDK_INT <= 28 && !has(Manifest.permission.WRITE_EXTERNAL_STORAGE)) need.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         if (need.isEmpty()) loadPage(); else requestPermissions(need.toArray(new String[0]), REQ_PERM);
+    }
+
+    /** 窗口铺满整块屏幕（含刘海 / 挖孔区域）。否则带刘海的手机会把内容整体往下推，底部被屏幕边缘挡住。 */
+    static void useWholeScreen(Activity a) {
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = a.getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = Build.VERSION.SDK_INT >= 30
+                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            a.getWindow().setAttributes(lp);
+        }
     }
 
     private boolean has(String p) { return checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED; }
@@ -137,15 +149,11 @@ public class MainActivity extends Activity {
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
 
-    /** 网页容器 = 整块屏幕，并固定不动：键盘弹出时网页不会被挤压或顶起（键盘高度另外量出来告诉网页）。手机版不做任何比例缩放。 */
-    @SuppressWarnings("deprecation")
+    /** 网页容器 = 窗口里整块可用区域（MATCH_PARENT，不再硬写屏幕高度：写死的高度在带刘海 / 状态栏的机型上会比窗口高，底部被挡）。
+     *  键盘弹出时窗口不会被缩小（adjustNothing），键盘高度另外量出来告诉网页。 */
     private void layoutHolder() {
-        DisplayMetrics dm = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dm.widthPixels, dm.heightPixels, Gravity.TOP | Gravity.START);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -1);
         holder.setLayoutParams(lp);
-        holderTop = 0;
-        holderBottomPx = dm.heightPixels;
     }
 
     // ---------------------------------------------------------------- 键盘
@@ -166,7 +174,10 @@ public class MainActivity extends Activity {
         root.getWindowVisibleDisplayFrame(vis);
         int kb = Math.max(0, dm.heightPixels - vis.bottom);
         if (kb < dm.heightPixels * 0.15f) kb = 0;                         // 小于 15% 当作不是键盘（状态栏 / 导航栏）
-        int overlap = kb == 0 ? 0 : Math.max(0, holderBottomPx - (dm.heightPixels - kb));   // 键盘盖住网页容器底部多少像素
+        int[] loc = new int[2];
+        holder.getLocationOnScreen(loc);
+        int holderBottom = loc[1] + holder.getHeight();               // 网页容器在屏幕上的实际下边缘
+        int overlap = kb == 0 ? 0 : Math.max(0, holderBottom - (dm.heightPixels - kb));   // 键盘盖住网页容器底部多少像素
         if (overlap == kbLast) return;
         kbLast = overlap;
         final float css = overlap / dm.density;
@@ -174,6 +185,27 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- WebView
+
+    private void rebuildWeb() {
+        if (isFinishing() || web == null) return;
+        try {
+            holder.removeView(web);
+            web.removeJavascriptInterface("LucidaAndroid");
+            web.destroy();
+        } catch (Throwable ignore) {}
+        try {
+            web = new WebView(this);
+            holder.addView(web, new FrameLayout.LayoutParams(-1, -1));
+            setupWebView();
+            pageStarted = false;
+            loadPage();
+            Toast.makeText(this, "澄影的网页进程被系统回收（多半是内存不够），已自动恢复", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            web = null;
+            Toast.makeText(this, "网页进程被系统回收，请重新打开澄影", Toast.LENGTH_LONG).show();
+            finish();
+        }
+    }
 
     @SuppressWarnings({"SetJavaScriptEnabled", "deprecation"})
     private void setupWebView() {
@@ -214,6 +246,12 @@ public class MainActivity extends Activity {
             Uri u = r.getUrl();
             if (!"https".equals(u.getScheme()) || !HOST.equals(u.getHost())) return null;
             return serve(u);
+        }
+        /** 网页渲染进程被系统杀掉（多半是 4K 录像占内存太多）：不让整个应用跟着退出，重建网页视图并重新加载。 */
+        @Override
+        public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail d) {
+            ui.post(new Runnable() { @Override public void run() { rebuildWeb(); } });
+            return true;
         }
         @Override
         public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {

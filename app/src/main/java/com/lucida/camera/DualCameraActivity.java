@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.Color;
 import android.graphics.SurfaceTexture;
 import android.graphics.drawable.GradientDrawable;
@@ -17,6 +18,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -72,6 +74,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private final JSONArray items = new JSONArray();
     private int pending;
     private String failCode, failMsg;
+    // 变焦：每个摄像头各记各的倍数（0 = 后置，1 = 前置）；转盘控制当前「主画面」的那个
+    private final float[] zoomMin = {1f, 1f}, zoomMax = {1f, 1f}, zoomCur = {1f, 1f};
+    private final Rect[] activeArr = new Rect[2];
+    private final CaptureRequest.Builder[] reqB = new CaptureRequest.Builder[2];
+    private ZoomDial dial;
+    private boolean lastBackMain = true;
 
     private TextView timer, toast, countBadge;
     private View shutterInner;
@@ -84,6 +92,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         super.onCreate(b);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        MainActivity.useWholeScreen(this);
         ui = new Handler(Looper.getMainLooper());
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
         buildUi();
@@ -246,12 +255,23 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         bp.bottomMargin = dp(28);
         root.addView(bottom, bp);
 
+        dial = new ZoomDial(this);
+        dial.setRange(zoomMin[0], zoomMax[0], zoomCur[0]);
+        dial.setListener(new ZoomDial.Listener() { @Override public void onZoom(float z, boolean fromUser) {
+            int c = mainCam();
+            zoomCur[c] = z;
+            applyZoom(c);
+        } });
+        FrameLayout.LayoutParams dp1 = new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM);
+        dp1.bottomMargin = dp(150); dp1.leftMargin = dp(24); dp1.rightMargin = dp(24);
+        root.addView(dial, dp1);
+
         toast = new TextView(this);
         toast.setTextColor(Color.WHITE); toast.setTextSize(14); toast.setPadding(dp(14), dp(6), dp(14), dp(6));
         GradientDrawable xg = new GradientDrawable(); xg.setColor(0x99000000); xg.setCornerRadius(dp(14));
         toast.setBackground(xg); toast.setAlpha(0f);
         FrameLayout.LayoutParams xp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        xp.bottomMargin = dp(150);
+        xp.bottomMargin = dp(226);
         root.addView(toast, xp);
         setContentView(root);
         paint();
@@ -286,7 +306,61 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 if (f == CameraCharacteristics.LENS_FACING_FRONT && frontId == null) frontId = id;
             }
         } catch (Exception e) { return false; }
-        return backId != null && frontId != null;
+        if (backId == null || frontId == null) return false;
+        for (int cam = 0; cam < 2; cam++) {
+            try {
+                CameraCharacteristics c = cm.getCameraCharacteristics(cam == 0 ? backId : frontId);
+                activeArr[cam] = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+                float lo = 1f, hi = 1f;
+                if (Build.VERSION.SDK_INT >= 30) {
+                    android.util.Range<Float> r = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+                    if (r != null) { lo = r.getLower(); hi = r.getUpper(); }
+                }
+                if (hi <= 1.01f) {                       // 老系统 / 不支持缩放比：用数码裁切
+                    Float m = c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+                    hi = m == null ? 1f : m; lo = 1f;
+                }
+                zoomMin[cam] = Math.max(0.1f, lo);
+                zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, 10f));
+                zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
+            } catch (Throwable ignore) {}
+        }
+        return true;
+    }
+
+    /** 把某个摄像头的倍数写进它的预览请求（Android 11+ 用缩放比，可以 <1 切超广角；更老的系统用裁切区域）。 */
+    private void applyZoom(final int cam) {
+        if (camH == null) return;
+        camH.post(new Runnable() { @Override public void run() {
+            try {
+                CaptureRequest.Builder rb = reqB[cam];
+                CameraCaptureSession cs = ses[cam];
+                if (rb == null || cs == null) return;
+                float z = zoomCur[cam];
+                if (Build.VERSION.SDK_INT >= 30) {
+                    rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
+                } else {
+                    Rect a = activeArr[cam];
+                    if (a != null) {
+                        float zz = Math.max(1f, z);
+                        int w = Math.round(a.width() / zz), h = Math.round(a.height() / zz);
+                        int l = a.left + (a.width() - w) / 2, t = a.top + (a.height() - h) / 2;
+                        rb.set(CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h));
+                    }
+                }
+                cs.setRepeatingRequest(rb.build(), null, camH);
+            } catch (Throwable ignore) {}
+        } });
+    }
+
+    /** 转盘对应「当前主画面」的摄像头；切换主画面（点小窗 / 换位）时，转盘跟着换成那个摄像头的倍数。 */
+    private int mainCam() { return state.backIsMain ? 0 : 1; }
+
+    private void syncDial() {
+        if (dial == null) return;
+        int c = mainCam();
+        dial.setRange(zoomMin[c], zoomMax[c], zoomCur[c]);
+        lastBackMain = state.backIsMain;
     }
 
     @Override public void surfaceCreated(final SurfaceHolder h) {
@@ -370,7 +444,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         CaptureRequest.Builder rb = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                         rb.addTarget(s);
                         rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                        reqB[cam] = rb;
                         cs.setRepeatingRequest(rb.build(), null, camH);
+                        if (Math.abs(zoomCur[cam] - 1f) > 0.01f) applyZoom(cam);
                     } catch (Exception e) { fail("error", "开启预览失败：" + e.getMessage()); }
                 }
                 @Override public void onConfigureFailed(CameraCaptureSession cs) {
@@ -385,7 +461,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         for (int i = 0; i < 2; i++) {
             try { if (ses[i] != null) ses[i].close(); } catch (Throwable ignore) {}
             try { if (dev[i] != null) dev[i].close(); } catch (Throwable ignore) {}
-            ses[i] = null; dev[i] = null;
+            ses[i] = null; dev[i] = null; reqB[i] = null;
         }
     }
 
@@ -401,6 +477,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (gl == null || finished) return;
         boolean both = gl.update(cam);
         if (!both) return;
+        if (lastBackMain != state.backIsMain) { lastBackMain = state.backIsMain; ui.post(new Runnable() { @Override public void run() { syncDial(); } }); }
         gl.drawPreview();
         if (recording && recorder != null && gl.hasEncoder()) gl.drawEncoder(System.nanoTime() - recStartNs, recW, recH);
     }
