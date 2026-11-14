@@ -16,7 +16,7 @@ import java.util.ArrayList;
 /**
  * H.264（Surface 输入）+ AAC（麦克风，可选）→ MP4。视频帧由 GlComposer 画到 inputSurface。
  *
- * 11.1.5 修复「双摄只能录 1 秒」：
+ * 11.1.6 修复「双摄只能录 1 秒」：
  *  旧版录音线程只往 AAC 编码器里塞数据、录完才去取输出 → AAC 输出队列堆满卡死 →
  *  muxer 永远等不到音频轨 → 视频编码器的输出也没人取 → 输入 Surface 的缓冲用完，
  *  GL 线程 eglSwapBuffers 被卡住，画面在约 1 秒后定格。
