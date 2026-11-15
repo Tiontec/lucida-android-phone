@@ -28,6 +28,7 @@ final class DualRecorder {
     final int w, h;
     private final File file;
     private final boolean wantAudio;
+    private final int fps;
     private MediaCodec venc, aenc;
     private MediaMuxer mux;
     private Surface input;
@@ -49,13 +50,16 @@ final class DualRecorder {
         boolean video; byte[] data; MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
     }
 
-    DualRecorder(File f, int w, int h, boolean audio) { file = f; this.w = w; this.h = h; wantAudio = audio; }
+    DualRecorder(File f, int w, int h, boolean audio) { this(f, w, h, audio, 30); }
+
+    /** fps = 用户选的目标帧率（编码器帧率 / 码率按它走）。 */
+    DualRecorder(File f, int w, int h, boolean audio, int fps) { file = f; this.w = w; this.h = h; wantAudio = audio; this.fps = Math.max(24, Math.min(60, fps)); }
 
     Surface start() throws Exception {
         MediaFormat vf = MediaFormat.createVideoFormat("video/avc", w, h);
         vf.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        vf.setInteger(MediaFormat.KEY_BIT_RATE, w * h * 5);
-        vf.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+        vf.setInteger(MediaFormat.KEY_BIT_RATE, (int) Math.min(100_000_000L, (long) w * h * 5L * Math.max(30, fps) / 30L));
+        vf.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
         vf.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
         venc = MediaCodec.createEncoderByType("video/avc");
         venc.configure(vf, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);

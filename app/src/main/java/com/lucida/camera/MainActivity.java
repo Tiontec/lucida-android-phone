@@ -139,8 +139,8 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    @Override public void onConfigurationChanged(Configuration c) { super.onConfigurationChanged(c); layoutHolder(); immersive(); }
-    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); }
+    @Override public void onConfigurationChanged(Configuration c) { super.onConfigurationChanged(c); layoutHolder(); immersive(); pushInsets(); }
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) { immersive(); pushInsets(); } }
 
     @SuppressWarnings("deprecation")
     private void immersive() {
@@ -185,6 +185,33 @@ public class MainActivity extends Activity {
     }
 
     // ---------------------------------------------------------------- WebView
+
+    /** 把刘海 / 挖孔 / 圆角 / 导航条占的安全区告诉网页（--sat / --sab / --sal / --sar，单位 CSS 像素）。
+     *  安卓 WebView 的 env(safe-area-inset-*) 在不少机型上恒为 0，顶栏会压到摄像头孔上，所以由原生量好再给网页。 */
+    private int insT, insB, insL, insR;
+    private void measureInsets() {
+        float d = getResources().getDisplayMetrics().density;
+        int t = 0, b = 0, l = 0, r = 0;
+        try {
+            android.view.WindowInsets wi = getWindow().getDecorView().getRootWindowInsets();
+            if (wi != null) {
+                t = wi.getSystemWindowInsetTop(); b = wi.getSystemWindowInsetBottom();
+                l = wi.getSystemWindowInsetLeft(); r = wi.getSystemWindowInsetRight();
+                if (Build.VERSION.SDK_INT >= 28 && wi.getDisplayCutout() != null) {
+                    android.view.DisplayCutout c = wi.getDisplayCutout();
+                    t = Math.max(t, c.getSafeInsetTop()); b = Math.max(b, c.getSafeInsetBottom());
+                    l = Math.max(l, c.getSafeInsetLeft()); r = Math.max(r, c.getSafeInsetRight());
+                }
+            }
+        } catch (Throwable ignore) {}
+        insT = Math.round(t / d); insB = Math.round(b / d); insL = Math.round(l / d); insR = Math.round(r / d);
+    }
+
+    private void pushInsets() {
+        measureInsets();
+        js("(function(){var s=document.documentElement.style;s.setProperty('--sat','" + insT + "px');s.setProperty('--sab','" + insB
+                + "px');s.setProperty('--sal','" + insL + "px');s.setProperty('--sar','" + insR + "px');window.dispatchEvent(new Event('resize'))})()");
+    }
 
     private void rebuildWeb() {
         if (isFinishing() || web == null) return;
@@ -253,6 +280,8 @@ public class MainActivity extends Activity {
             ui.post(new Runnable() { @Override public void run() { rebuildWeb(); } });
             return true;
         }
+        @Override public void onPageStarted(WebView v, String url, android.graphics.Bitmap f) { pushInsets(); }
+        @Override public void onPageFinished(WebView v, String url) { pushInsets(); }
         @Override
         public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
             Uri u = r.getUrl();
