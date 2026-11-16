@@ -24,7 +24,6 @@ final class DualPrefs {
     int gradeTarget = 2;       // 调色板正在改谁：0 后置 / 1 前置 / 2 同时
     float pipW = 0.32f;        // 小窗宽度占比（双击放大 / 缩小）
     boolean fullRate = false;  // 满帧画面运行录制：开 = 发热也不降帧；关 = 过热时自动降到 30 帧
-    String order = "";         // 调色盘预设顺序（逗号分隔的 sid，空 = 默认顺序；「标准」永远排第一）
 
     DualPrefs(Context c) {
         sp = c.getSharedPreferences("lucida_dual", Context.MODE_PRIVATE);
@@ -46,7 +45,6 @@ final class DualPrefs {
         gradeTarget = Math.max(0, Math.min(2, sp.getInt("gradeTarget", 2)));
         pipW = Math.max(0.2f, Math.min(0.6f, sp.getFloat("pipW", 0.32f)));
         fullRate = sp.getBoolean("fullRate", false);
-        order = sp.getString("presetOrder", "");
     }
 
     private static int pick(int v, int a, int b, int c) { return v == a || v == b || v == c ? v : b; }
@@ -56,6 +54,6 @@ final class DualPrefs {
                 .putBoolean("mirror", mirror).putBoolean("audio", audio).putInt("style", style).putBoolean("grid", gridLines)
                 .putBoolean("live", live).putInt("liveDur", liveDur).putBoolean("liveSep", liveSeparate).putBoolean("heif", heif).putInt("pipShape", pipShape)
                 .putBoolean("liveTimer", liveTimer).putBoolean("glass", glass).putInt("gradeTarget", gradeTarget).putFloat("pipW", pipW)
-                .putBoolean("fullRate", fullRate).putString("presetOrder", order).apply();
+                .putBoolean("fullRate", fullRate).apply();
     }
 }

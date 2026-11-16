@@ -38,7 +38,7 @@ final class DualOrderView extends FrameLayout {
         bar.addView(DualUi.label(c, "调色盘预设顺序", 18, Color.WHITE), new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
         TextView reset = DualUi.label(c, "恢复默认", 15, DualUi.YELLOW);
         reset.setPadding(DualUi.dp(c, 18), DualUi.dp(c, 10), DualUi.dp(c, 18), DualUi.dp(c, 10));
-        reset.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { PresetOrder.reset(DualOrderView.this.prefs); fill(); } });
+        reset.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { PresetOrder.reset(getContext()); fill(); } });
         bar.addView(reset, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
         TextView note = DualUi.label(c, "按住右边的 ≡ 上下拖动，调整左右滑动调色盘时预设出现的先后；「标准」固定在第一个。", 12, 0x80FFFFFF);
         note.setPadding(DualUi.dp(c, 20), 0, DualUi.dp(c, 20), DualUi.dp(c, 8));
@@ -54,7 +54,7 @@ final class DualOrderView extends FrameLayout {
     private void fill() {
         Context c = getContext();
         list.removeAllViews();
-        int[] idx = PresetOrder.indices(prefs);
+        int[] idx = PresetOrder.indices(getContext());
         for (int k = 0; k < idx.length; k++) list.addView(makeRow(c, idx[k], k == 0), new LinearLayout.LayoutParams(-1, rowH));
     }
 
@@ -94,7 +94,7 @@ final class DualOrderView extends FrameLayout {
                             row.setTranslationY(0); row.setElevation(0); row.setBackgroundColor(0xFF161616);
                             int[] idx = new int[list.getChildCount()];
                             for (int i = 0; i < idx.length; i++) idx[i] = (Integer) list.getChildAt(i).getTag();
-                            PresetOrder.save(prefs, idx);
+                            PresetOrder.save(c, idx);
                             return true;
                         }
                     }

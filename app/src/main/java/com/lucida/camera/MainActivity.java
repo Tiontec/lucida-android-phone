@@ -124,8 +124,22 @@ public class MainActivity extends Activity {
         web.loadUrl("https://" + HOST + "/index.html");
     }
 
-    @Override protected void onResume() { super.onResume(); if (web != null) { web.onResume(); web.resumeTimers(); } immersive(); }
-    @Override protected void onPause() { if (web != null) web.onPause(); super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume(); if (web != null) { web.onResume(); web.resumeTimers(); } immersive();
+        pushNativeKv();
+    }
+
+    /** 双摄等原生界面改过的存档设置（如调色盘预设顺序）→ 回到网页时同步给它 */
+    private void pushNativeKv() {
+        if (web == null) return;
+        java.util.Map<String, String> ch = NativeKv.of(this).takeNativeChanges();
+        if (ch.isEmpty()) return;
+        try {
+            final String js = "window.__lucidaKvPush&&window.__lucidaKvPush(" + new org.json.JSONObject(ch).toString() + ")";
+            web.post(new Runnable() { @Override public void run() { web.evaluateJavascript(js, null); } });
+        } catch (Throwable ignore) {}
+    }
+    @Override protected void onPause() { if (web != null) web.onPause(); NativeKv.of(this).flush(); super.onPause(); }
 
     @Override
     protected void onDestroy() {

@@ -183,6 +183,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     protected void onPause() {
         if (recording) stopRecording();
         closeCameras();
+        NativeKv.of(this).flush();
         super.onPause();
     }
 
@@ -504,7 +505,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         GradeState sh = palette != null ? palette.shown() : gradeBack;
         if (readout != null) {
             readout.setText("色调 " + Math.round(sh.y * 100) + "   颜色 " + Math.round(sh.x * 100) + "   调色盘 " + Math.round(sh.str * 100));
-            int[] ord = PresetOrder.indices(prefs);
+            int[] ord = PresetOrder.indices(this);
             int pos = PresetOrder.posOf(ord, sh.preset);
             presetLabel.setText(sh.cur().name + "  (" + (pos + 1) + "/" + ord.length + ")");
             if (dots != null) dots.set(ord.length, pos);
@@ -514,7 +515,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     /** 左右滑：按「预设顺序」往后 / 往前一个 */
     private void stepPreset(int dir) {
-        int[] ord = PresetOrder.indices(prefs);
+        int[] ord = PresetOrder.indices(this);
         int pos = PresetOrder.posOf(ord, palette.shown().preset);
         palette.selectPreset(ord[((pos + dir) % ord.length + ord.length) % ord.length]);
     }

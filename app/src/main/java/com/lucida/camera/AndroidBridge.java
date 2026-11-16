@@ -36,6 +36,13 @@ public class AndroidBridge {
 
     private File tmpDir() { File d = new File(act.getCacheDir(), "save"); d.mkdirs(); return d; }
 
+    // ---- 原生存储（A2）：网页 localStorage 的 lucida.* 键镜像到原生 ----
+    @JavascriptInterface public String kvAll() { return NativeKv.of(act).allJson(); }
+    @JavascriptInterface public void kvSet(String k, String v) { NativeKv.of(act).webSet(k, v); }
+    @JavascriptInterface public void kvRemove(String k) { NativeKv.of(act).webRemove(k); }
+    @JavascriptInterface public void kvClear() { NativeKv.of(act).webClear(); }
+    @JavascriptInterface public void kvSeed(String json) { NativeKv.of(act).webSeed(json); }
+
     @JavascriptInterface
     public String info() {
         try {
