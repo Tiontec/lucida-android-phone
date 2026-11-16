@@ -277,7 +277,7 @@ final class ZoomBar extends View {
         if (a <= 0.01f) return;
         int[] vs = visibleStops();
         if (vs.length == 0) return;
-        float gap = 2f, pad = 4f, w = pad * 2;
+        float gap = 2f, pad = 5f, w = pad * 2;
         float maxB = 0;
         for (int i = 0; i < vs.length; i++) { w += btnSize[vs[i]]; maxB = Math.max(maxB, btnSize[vs[i]]); if (i > 0) w += gap; }
         float h = maxB + pad * 2;
@@ -290,11 +290,12 @@ final class ZoomBar extends View {
         rf.set(left, top, left + w, bottom);
         p.setStyle(Paint.Style.FILL); p.setShader(null);
         p.setColor(argb(a * .62f, 24, 24, 28));
-        c.drawRoundRect(rf, 30, 30, p);
+        float rad = h / 2f;     // 两端是标准半圆，里面的按钮圆和端盖同心，0.5× / 30 不会被截
+        c.drawRoundRect(rf, rad, rad, p);
         p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1f);
         p.setShader(new LinearGradient(left, top, left + w, bottom, new int[]{argb(a * .75f, 255, 255, 255), argb(0, 255, 255, 255), argb(a * .45f, 255, 255, 255)}, new float[]{0, .5f, 1f}, Shader.TileMode.CLAMP));
         rf.inset(.5f, .5f);
-        c.drawRoundRect(rf, 30, 30, p);
+        c.drawRoundRect(rf, rad - .5f, rad - .5f, p);
         p.setShader(null);
         float x = left + pad;
         int act = activeIdx();
@@ -420,7 +421,7 @@ final class ZoomBar extends View {
     private boolean inPill(float x, float y) {
         float W = getWidth() / dens, H = getHeight() / dens;
         int[] vs = visibleStops();
-        float w = 8;
+        float w = 10;
         for (int i = 0; i < vs.length; i++) w += btnSize[vs[i]] + (i > 0 ? 2 : 0);
         float left = W / 2 - w / 2 - 6, right = W / 2 + w / 2 + 6, bottom = H - 14 + 6, top = H - 14 - 52 - 6;
         return x >= left && x <= right && y >= top && y <= bottom;
@@ -493,9 +494,9 @@ final class ZoomBar extends View {
                     // 点药丸上的某一档
                     float W = getWidth() / dens, H2 = getHeight() / dens;
                     int[] vs = visibleStops();
-                    float w = 8;
+                    float w = 10;
                     for (int i = 0; i < vs.length; i++) w += btnSize[vs[i]] + (i > 0 ? 2 : 0);
-                    float px = W / 2 - w / 2 + 4;
+                    float px = W / 2 - w / 2 + 5;
                     for (int i = 0; i < vs.length; i++) {
                         float s = btnSize[vs[i]];
                         if (x >= px - 1 && x <= px + s + 1) { zoomTo(STOPS[vs[i]]); break; }

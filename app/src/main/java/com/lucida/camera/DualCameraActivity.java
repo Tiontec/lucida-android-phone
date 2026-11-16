@@ -18,14 +18,17 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Range;
 import android.util.Size;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -33,6 +36,8 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowInsets;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -52,7 +57,7 @@ import java.util.Locale;
 import java.util.Random;
 
 /**
- * 原生双摄（11.1.8 重写，纯原生界面，没有网页）：
+ * 原生双摄（11.1.8 重写，11.2.0 扩展，11.2.1 对照苹果补齐；纯原生界面，没有网页）：
  *  Camera2 同时打开前后摄像头 → GlComposer（OpenGL）合成画中画 / 上下分屏 + 调色 → 预览、拍照、录像（H.264 + AAC）。
  *  规格：分辨率 720p / 1080p / 4K × 帧率 24 / 30 / 60（每颗摄像头各自挑能达到的最大画面，达不到自动降档并提示）；
  *  片门全开 = 前后摄都用 4:3；变焦用主页面同款弧形转盘（ZoomBar），超广角 / 广角 / 主摄由缩放比切换。
@@ -63,7 +68,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private final DualState state = new DualState();
     private DualPrefs prefs;
-    private final GradeState grade = new GradeState();
+    private final GradeState gradeBack = new GradeState(), gradeFront = new GradeState();   // 前 / 后摄各一套调色
     private GlComposer gl;
     private HandlerThread glThread, camThread;
     private Handler glH, camH, ui;
@@ -105,6 +110,26 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private ImageView thumbImg;
     private TextView thumbCount;
     private DualPalette palette;
+    private DualDots dots;
+    private TextView liveTimerView;
+    private DualFocusView focusView;
+    // 对焦 / 曝光（每颗摄像头各一份）
+    private final MeteringRectangle[][] focusRegion = new MeteringRectangle[2][];
+    private final int[] maxAf = new int[2], maxAe = new int[2];
+    private final boolean[] evDragging = new boolean[2];
+    private int focusToken, relockToken, toastToken, liveToken;
+    private GestureDetector gd;
+    private boolean gDownPip, specOpen, lastGlass;
+    private LinearLayout hintStack;
+    private long liveStartNs;
+    private int liveTotal;
+    private final boolean[] afLock = new boolean[2], aeLock = new boolean[2];
+    private final int[] evIdx = new int[2], evLo = new int[2], evHi = new int[2], senOri = {90, 270};
+    private final float[] evStep = {1f, 1f};
+    private int focusCam = 0, previewN = 0;
+    private Runnable liveTickRun;
+    private PowerManager.OnThermalStatusChangedListener thermalListener;
+    private boolean throttled, pendingThrottle;
     private View overlay;
     private boolean paletteOpen;
     private int stageX, stageY, stageW = 1, stageH = 1, scrW, scrH, insetTop, insetBottom;
@@ -120,8 +145,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         MainActivity.useWholeScreen(this);
         ui = new Handler(Looper.getMainLooper());
         prefs = new DualPrefs(this);
-        grade.load(prefs.sp);
-        state.style = prefs.style; state.mirrorFront = prefs.mirror;
+        gradeBack.load(prefs.sp, "g_"); gradeFront.load(prefs.sp, "gf_");
+        DualUi.glass = prefs.glass;
+        state.style = prefs.style; state.mirrorFront = prefs.mirror; state.pipW = prefs.pipW;
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
         effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
         buildUi();
@@ -134,6 +160,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             requestPermissions(new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, REQ_PERM);
         }
         syncDial();
+        watchThermal();
     }
 
     @Override
@@ -161,6 +188,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 29 && thermalListener != null) {
+            try { ((PowerManager) getSystemService(POWER_SERVICE)).removeThermalStatusListener(thermalListener); } catch (Throwable ignore) {}
+        }
         closeCameras();
         if (glH != null) {
             final GlComposer g = gl;
@@ -205,35 +235,29 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
         stageTouch = new FrameLayout(this);
         root.addView(stageTouch);
+        focusView = new DualFocusView(this);
+        stageTouch.addView(focusView);
+        // 单击：小窗 → 互换主 / 副画面；主画面 → 对焦 + 测光（出现对焦框和曝光滑轨）；锁定状态下再点一下解除
+        // 双击小窗：放大 / 缩小；长按主画面：AE / AF 锁定；拖小窗：挪位置；对焦框在时上下拖：调曝光（向上变亮）
+        gd = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent e) { gDownPip = inPip(e.getX(), e.getY()); return true; }
+            @Override public boolean onSingleTapConfirmed(MotionEvent e) { tapAt(e.getX(), e.getY()); return true; }
+            @Override public boolean onDoubleTap(MotionEvent e) { if (inPip(e.getX(), e.getY())) togglePipSize(); return true; }
+            @Override public void onLongPress(MotionEvent e) { if (!gDownPip && !paletteOpen) focusAt(e.getX(), e.getY(), true); }
+            @Override public boolean onScroll(MotionEvent a, MotionEvent b, float dx, float dy) { dragBy(-dx, -dy); return true; }
+        });
         stageTouch.setOnTouchListener(new View.OnTouchListener() {
-            float lx, ly, dx, dy, sx, sy; boolean drag, inPip;
+            float sx, sy;
             @Override public boolean onTouch(View v, MotionEvent e) {
-                float W = v.getWidth(), H = v.getHeight();
-                switch (e.getAction()) {
-                    case MotionEvent.ACTION_DOWN: {
-                        specPanel.setVisibility(View.GONE);
-                        lx = sx = e.getX(); ly = sy = e.getY(); dx = dy = 0; drag = false;
-                        float[] r = state.rect(1, W, H);
-                        inPip = !paletteOpen && state.style == DualState.STYLE_PIP && e.getX() >= r[0] * W && e.getX() <= (r[0] + r[2]) * W && e.getY() >= r[1] * H && e.getY() <= (r[1] + r[3]) * H;
-                        return true;
-                    }
-                    case MotionEvent.ACTION_MOVE:
-                        if (inPip) {
-                            dx += Math.abs(e.getX() - lx); dy += Math.abs(e.getY() - ly);
-                            if (dx + dy > dp(8)) drag = true;
-                            if (drag) {
-                                float w = Math.round(W * state.pipW), h = Math.round(w * 4f / 3f), m = Math.round(W * 0.04f);
-                                state.pipX = Math.min(1f, Math.max(0f, state.pipX + (e.getX() - lx) / Math.max(1f, W - w - 2 * m)));
-                                state.pipY = Math.min(1f, Math.max(0f, state.pipY + (e.getY() - ly) / Math.max(1f, H - h - 2 * m)));
-                            }
-                            lx = e.getX(); ly = e.getY();
-                        }
+                gd.onTouchEvent(e);
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        setSpecPanel(false);
+                        sx = e.getX(); sy = e.getY();
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (inPip && !drag) { state.backIsMain = !state.backIsMain; syncDial(); }
-                        else if (paletteOpen && Math.abs(e.getX() - sx) > dp(60) && Math.abs(e.getX() - sx) > Math.abs(e.getY() - sy) * 1.3f) {
-                            grade.pick(grade.preset + (e.getX() < sx ? 1 : -1)); pushGrade(); palette.sync();
-                        }
+                        // 调色盘打开时左右滑：按「预设顺序」换预设
+                        if (paletteOpen && Math.abs(e.getX() - sx) > dp(60) && Math.abs(e.getX() - sx) > Math.abs(e.getY() - sy) * 1.3f) stepPreset(e.getX() < sx ? 1 : -1);
                         return true;
                 }
                 return true;
@@ -252,10 +276,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         btnPalette = icon(DualIcon.PALETTE, new View.OnClickListener() { @Override public void onClick(View v) { setPalette(!paletteOpen); } });
         btnSettings = icon(DualIcon.GEAR, new View.OnClickListener() { @Override public void onClick(View v) { openSettings(); } });
         specPill = DualUi.label(this, "", 13, Color.WHITE);
-        specPill.setGravity(Gravity.CENTER); specPill.setBackground(DualUi.round(0x29FFFFFF, 18, this));
-        specPill.setPadding(dp(14), 0, dp(14), 0);
-        specPill.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-            specPanel.setVisibility(specPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE); } });
+        specPill.setGravity(Gravity.CENTER); specPill.setSingleLine(true); specPill.setIncludeFontPadding(false);
+        specPill.setPadding(dp(16), 0, dp(16), 0); specPill.setMinWidth(dp(120));
+        stylePill();
+        specPill.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { setSpecPanel(!specOpen); } });
         root.addView(btnBack); root.addView(specPill); root.addView(btnLive); root.addView(btnPalette); root.addView(btnSettings);
         buildSpecPanel();
 
@@ -265,7 +289,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         presetLabel.setBackground(DualUi.round(0x73000000, 13, this)); presetLabel.setVisibility(View.GONE);
         timer = DualUi.label(this, "", 14, Color.WHITE); timer.setGravity(Gravity.CENTER);
         timer.setBackground(DualUi.round(0xD9E61A1A, 12, this)); timer.setVisibility(View.GONE);
-        root.addView(readout); root.addView(presetLabel); root.addView(timer);
+        dots = new DualDots(this); dots.setVisibility(View.GONE);
+        root.addView(readout); root.addView(presetLabel); root.addView(dots); root.addView(timer);
 
         // 底部：纯黑平面
         bottomBar = new FrameLayout(this);
@@ -274,13 +299,13 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         btnLayout = icon(DualIcon.PIP, new View.OnClickListener() { @Override public void onClick(View v) {
             if (recording) { say("录像中不能切换布局"); return; }
             state.style = state.style == DualState.STYLE_PIP ? DualState.STYLE_SPLIT : DualState.STYLE_PIP;
-            prefs.style = state.style; prefs.save(); syncButtons(); } });
+            clearFocus(); prefs.style = state.style; prefs.save(); syncButtons(); } });
         btnShape = icon(DualIcon.SHAPE, new View.OnClickListener() { @Override public void onClick(View v) {
             prefs.pipShape = (prefs.pipShape + 1) % 3; prefs.save(); applyShape(); say(new String[]{"小窗：圆角", "小窗：大圆角", "小窗：直角"}[prefs.pipShape]); } });
         btnMirror = icon(DualIcon.MIRROR, new View.OnClickListener() { @Override public void onClick(View v) {
             prefs.mirror = !prefs.mirror; state.mirrorFront = prefs.mirror; prefs.save(); syncButtons(); } });
         btnTorch = icon(DualIcon.TORCH, new View.OnClickListener() { @Override public void onClick(View v) { torch(); } });
-        btnSwap = icon(DualIcon.SWAP, new View.OnClickListener() { @Override public void onClick(View v) { state.backIsMain = !state.backIsMain; syncDial(); } });
+        btnSwap = icon(DualIcon.SWAP, new View.OnClickListener() { @Override public void onClick(View v) { swapMain(); } });
         tabPhoto = tab("照片", false); tabVideo = tab("视频", true);
         shutterRing = new View(this);
         android.graphics.drawable.GradientDrawable rg = new android.graphics.drawable.GradientDrawable();
@@ -302,7 +327,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         thumbBox.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { openAlbum(); } });
         for (View v : new View[]{btnLayout, btnShape, btnMirror, btnTorch, btnSwap, tabPhoto, tabVideo, shutterRing, shutterInner, thumbBox}) bottomBar.addView(v);
 
-        palette = new DualPalette(this, grade, new DualPalette.Host() {
+        palette = new DualPalette(this, gradeBack, gradeFront, prefs, new DualPalette.Host() {
             @Override public void onClose() { setPalette(false); }
             @Override public void onShutter() { shutterTapped(); }
             @Override public void onChange() { pushGrade(); }
@@ -310,10 +335,18 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         palette.setVisibility(View.GONE);
         root.addView(palette);
 
-        toast = DualUi.label(this, "", 14, Color.WHITE); toast.setGravity(Gravity.CENTER);
-        toast.setPadding(dp(14), dp(7), dp(14), dp(7)); toast.setBackground(DualUi.round(0xB3000000, 14, this)); toast.setAlpha(0f);
-        toast.setMaxWidth(dp(320));
-        root.addView(toast);
+        // 取景框左上角：实况计时 + 提示条（以后所有提示都放这里）。毛玻璃界面开着时是毛玻璃，关着时是普通深色面板
+        hintStack = new LinearLayout(this); hintStack.setOrientation(LinearLayout.VERTICAL);
+        liveTimerView = DualUi.label(this, "", 13, Color.WHITE); liveTimerView.setGravity(Gravity.CENTER);
+        liveTimerView.setPadding(dp(12), dp(4), dp(12), dp(4)); liveTimerView.setVisibility(View.GONE);
+        liveTimerView.setBackground(DualUi.round(0xE6E61A1A, 13, this));
+        toast = DualUi.label(this, "", 13, Color.WHITE); toast.setGravity(Gravity.CENTER_VERTICAL);
+        toast.setPadding(dp(12), dp(7), dp(12), dp(7)); toast.setVisibility(View.GONE);
+        styleToast();
+        hintStack.addView(liveTimerView, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2); tlp.topMargin = dp(6);
+        hintStack.addView(toast, tlp);
+        root.addView(hintStack, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT));
         spinnerView = new android.widget.ProgressBar(this);
         root.addView(spinnerView, new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER));
 
@@ -329,6 +362,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 if (r - l != scrW || b - t != scrH) relayout();
             }
         });
+        lastGlass = DualUi.glass;
         applyShape(); pushGrade(); syncButtons(); paint(); syncSpecPill();
     }
 
@@ -342,9 +376,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void buildSpecPanel() {
         specPanel = new LinearLayout(this);
         specPanel.setOrientation(LinearLayout.VERTICAL);
-        specPanel.setBackground(DualUi.round(0xF0161616, 18, this));
+        specPanel.setBackground(panelBg(18));
         specPanel.setPadding(dp(14), dp(12), dp(14), dp(12));
-        specPanel.setVisibility(View.GONE);
         final int[] resV = {720, 1080, 2160}, fpsV = {24, 30, 60};
         int ri = 1, fi = 1;
         for (int i = 0; i < 3; i++) { if (resV[i] == prefs.res) ri = i; if (fpsV[i] == prefs.fps) fi = i; }
@@ -370,6 +403,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, -2); np.topMargin = dp(10);
         specPanel.addView(n, np);
         root.addView(specPanel);
+        specPanel.setVisibility(specOpen ? View.VISIBLE : View.GONE);
     }
 
     /** 屏幕尺寸 / 安全区变了就重新摆放所有东西 */
@@ -398,12 +432,21 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         place(btnLive, W - dp(14) - 3 * s - dp(16), y0, s, s);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(dp(300), -2, Gravity.TOP | Gravity.LEFT);
         sp.leftMargin = dp(14); sp.topMargin = y0 + s + dp(6); specPanel.setLayoutParams(sp);
-        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(dp(210), dp(26), Gravity.TOP | Gravity.LEFT);
-        rp.leftMargin = stageX + (stageW - dp(210)) / 2; rp.topMargin = stageY + dp(10); readout.setLayoutParams(rp);
-        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(dp(150), dp(26), Gravity.TOP | Gravity.LEFT);
-        pp.leftMargin = stageX + (stageW - dp(150)) / 2; pp.topMargin = stageY + stageH - dp(200); presetLabel.setLayoutParams(pp);
+        // 取景框左上角：实况计时 + 提示条
+        FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT);
+        hp.leftMargin = stageX + dp(12); hp.topMargin = stageY + dp(10); hintStack.setLayoutParams(hp);
+        toast.setMaxWidth(Math.max(dp(160), stageW * 6 / 10));
+        // 录像计时：取景框右上角
         FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(dp(92), dp(26), Gravity.TOP | Gravity.LEFT);
-        tp.leftMargin = stageX + (stageW - dp(92)) / 2; tp.topMargin = stageY + dp(10); timer.setLayoutParams(tp);
+        tp.leftMargin = stageX + stageW - dp(92) - dp(12); tp.topMargin = stageY + dp(10); timer.setLayoutParams(tp);
+        // 调色盘：悬浮面板（离屏幕边 8dp），上面是预设名 + 页码圆点 + 数值
+        int ph = dp(280), pm = dp(8);
+        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(W - 2 * pm, ph, Gravity.BOTTOM | Gravity.LEFT);
+        pl.leftMargin = pm; pl.bottomMargin = bot + pm; palette.setLayoutParams(pl);
+        int panelTop = H - bot - pm - ph;
+        place(dots, W / 2 - dp(80), panelTop - dp(20), dp(160), dp(14));
+        place(presetLabel, W / 2 - dp(80), panelTop - dp(20) - dp(30), dp(160), dp(26));
+        place(readout, W / 2 - dp(110), panelTop - dp(20) - dp(30) - dp(30), dp(220), dp(26));
         // 底栏
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(W, barH, Gravity.BOTTOM); bottomBar.setLayoutParams(bp);
         int r1 = dp(8), b34 = dp(34);
@@ -418,7 +461,6 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         place(shutterInner, W / 2 - dp(30), cy - dp(30), dp(60), dp(60));
         place(thumbBox, dp(26), cy - dp(27), dp(54), dp(54));
         place(btnSwap, W - dp(26) - dp(46), cy - dp(23), dp(46), dp(46));
-        FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(W, dp(290) + bot, Gravity.BOTTOM); palette.setLayoutParams(pl);
         applyOutputSize();
     }
     private static final int ViewGroup_WRAP = -2;
@@ -437,7 +479,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void syncButtons() {
         btnLive.set(prefs.live); btnLive.setEnabled(!videoMode); btnLive.setAlpha(videoMode ? .4f : 1f);
-        btnPalette.set(grade.active() || paletteOpen);
+        btnPalette.set(gradeBack.active() || gradeFront.active() || paletteOpen);
         btnTorch.set(torchOn); btnMirror.set(prefs.mirror);
         btnLayout.setKind(state.style == DualState.STYLE_PIP ? DualIcon.PIP : DualIcon.SPLIT);
         boolean pip = state.style == DualState.STYLE_PIP;
@@ -452,14 +494,29 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void applyShape() { if (gl != null) gl.pipCorner = new float[]{.085f, .2f, 0f}[prefs.pipShape]; btnShape.shapeStyle = prefs.pipShape; btnShape.invalidate(); }
 
+    /** 把前 / 后摄各自的调色写进 GL（每颗摄像头各用各的），并存档；顺便刷新预设名、页码、数值、调色板图标 */
     private void pushGrade() {
-        if (gl != null) { gl.grade = grade.params(); gl.gradeOn = grade.active(); }
-        grade.save(prefs.sp);
-        if (readout != null) {
-            readout.setText("色调 " + Math.round(grade.y * 100) + "   颜色 " + Math.round(grade.x * 100) + "   调色盘 " + Math.round(grade.str * 100));
-            presetLabel.setText(grade.cur().name + "  (" + (grade.preset + 1) + "/" + GradeState.PRESETS.length + ")");
+        if (gl != null) {
+            gl.gradeCam[0] = gradeBack.params(); gl.gradeOnCam[0] = gradeBack.active();
+            gl.gradeCam[1] = gradeFront.params(); gl.gradeOnCam[1] = gradeFront.active();
         }
-        if (btnPalette != null) syncButtons();
+        gradeBack.save(prefs.sp, "g_"); gradeFront.save(prefs.sp, "gf_");
+        GradeState sh = palette != null ? palette.shown() : gradeBack;
+        if (readout != null) {
+            readout.setText("色调 " + Math.round(sh.y * 100) + "   颜色 " + Math.round(sh.x * 100) + "   调色盘 " + Math.round(sh.str * 100));
+            int[] ord = PresetOrder.indices(prefs);
+            int pos = PresetOrder.posOf(ord, sh.preset);
+            presetLabel.setText(sh.cur().name + "  (" + (pos + 1) + "/" + ord.length + ")");
+            if (dots != null) dots.set(ord.length, pos);
+        }
+        if (btnPalette != null) { btnPalette.setPad(sh.x, sh.y); syncButtons(); }
+    }
+
+    /** 左右滑：按「预设顺序」往后 / 往前一个 */
+    private void stepPreset(int dir) {
+        int[] ord = PresetOrder.indices(prefs);
+        int pos = PresetOrder.posOf(ord, palette.shown().preset);
+        palette.selectPreset(ord[((pos + dir) % ord.length + ord.length) % ord.length]);
     }
 
     private void setPalette(boolean on) {
@@ -469,8 +526,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         zoomBar.setVisibility(on ? View.GONE : View.VISIBLE);
         readout.setVisibility(on ? View.VISIBLE : View.GONE);
         presetLabel.setVisibility(on ? View.VISIBLE : View.GONE);
-        specPanel.setVisibility(View.GONE);
-        if (on) palette.sync();
+        dots.setVisibility(on ? View.VISIBLE : View.GONE);
+        setSpecPanel(false);
+        if (on) { clearFocus(); palette.sync(); }
         pushGrade();
     }
 
@@ -480,13 +538,19 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void openSettings() {
-        specPanel.setVisibility(View.GONE);
+        setSpecPanel(false);
         if (overlay != null) return;
         final DualSettingsView v = new DualSettingsView(this, prefs, new DualSettingsView.Host() {
             @Override public void onClose() { closeOverlay(); }
             @Override public void onChanged(boolean reconfigure) {
                 state.mirrorFront = prefs.mirror; if (gl != null) gl.borderMode = prefs.pipBorder;
                 gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
+                if (lastGlass != prefs.glass) applyGlass();
+                if (prefs.fullRate) {
+                    pendingThrottle = false;
+                    if (throttled && !recording && !clipping) { throttled = false; effFps = prefs.fps; say("满帧画面运行录制已开启，恢复所选帧率"); restart(); }
+                }
+                pushGrade();     // 预设顺序可能变了
                 syncSpecPill(); syncButtons();
                 if (reconfigure) { relayout(); restartWithPrefs(); }
             }
@@ -504,14 +568,238 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void closeOverlay() { if (overlay != null) { root.removeView(overlay); overlay = null; } }
 
+    /** 提示条：取景框左上角。毛玻璃界面开着 = 毛玻璃，关着 = 普通深色面板 */
     private void say(final String t) {
         ui.post(new Runnable() { @Override public void run() {
-            toast.setText(t); toast.setAlpha(1f);
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-            lp.bottomMargin = Math.max(dp(170), scrH - (stageY + stageH) + dp(130)); toast.setLayoutParams(lp);
-            toast.animate().cancel();
-            toast.animate().alpha(0f).setStartDelay(2600).setDuration(300).start();
+            toast.setText(t); toast.setVisibility(View.VISIBLE);
+            toast.animate().cancel(); toast.setAlpha(1f);
+            final int tok = ++toastToken;
+            ui.postDelayed(new Runnable() { @Override public void run() {
+                if (tok != toastToken) return;
+                toast.animate().alpha(0f).setDuration(300).withEndAction(new Runnable() { @Override public void run() {
+                    if (tok == toastToken) toast.setVisibility(View.GONE); } }).start();
+            } }, 2600);
         } });
+    }
+
+    private android.graphics.drawable.Drawable panelBg(float rDp) {
+        if (DualUi.glass) {
+            return new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{
+                    DualUi.round(0x8C0A0A0A, rDp, this), DualUi.surface(0, rDp, this)});
+        }
+        return DualUi.round(0xF0161616, rDp, this);
+    }
+    private void stylePill() { specPill.setBackground(DualUi.surface(0x29FFFFFF, 18, this)); }
+    private void styleToast() {
+        toast.setBackground(DualUi.glass ? panelBg(13) : DualUi.round(0xD9121212, 13, this));
+    }
+
+    /** 毛玻璃界面开关变了：重画所有控件 */
+    private void applyGlass() {
+        lastGlass = prefs.glass; DualUi.glass = prefs.glass;
+        stylePill(); styleToast();
+        DualIcon[] ics = {btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap};
+        for (DualIcon i : ics) if (i != null) i.invalidate();
+        root.removeView(specPanel); buildSpecPanel(); relayout();
+        palette.restyle();
+    }
+
+    /** 规格面板展开 / 收起：毛玻璃开着时是果冻（Q 弹）动画，关着时直接出现 / 消失 */
+    private void setSpecPanel(final boolean open) {
+        if (open == specOpen && (specPanel.getVisibility() == View.VISIBLE) == open) return;
+        specOpen = open;
+        specPanel.animate().cancel();
+        if (!DualUi.glass) { specPanel.setScaleX(1f); specPanel.setScaleY(1f); specPanel.setAlpha(1f); specPanel.setVisibility(open ? View.VISIBLE : View.GONE); return; }
+        specPanel.setPivotX(dp(36)); specPanel.setPivotY(0f);
+        if (open) {
+            specPanel.setVisibility(View.VISIBLE);
+            specPanel.setScaleX(.3f); specPanel.setScaleY(.15f); specPanel.setAlpha(0f);
+            specPanel.animate().alpha(1f).setDuration(160).start();
+            android.animation.ValueAnimator ax = android.animation.ValueAnimator.ofFloat(.3f, 1f), ay = android.animation.ValueAnimator.ofFloat(.15f, 1f);
+            ax.setDuration(520); ax.setInterpolator(new OvershootInterpolator(2.2f));
+            ay.setDuration(560); ay.setStartDelay(40); ay.setInterpolator(new OvershootInterpolator(3.2f));
+            ax.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleX((Float) a.getAnimatedValue()); } });
+            ay.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleY((Float) a.getAnimatedValue()); } });
+            ax.start(); ay.start();
+        } else {
+            specPanel.animate().scaleX(.35f).scaleY(.12f).alpha(0f).setDuration(230).setInterpolator(new AccelerateInterpolator(1.5f))
+                    .withEndAction(new Runnable() { @Override public void run() {
+                        if (!specOpen) { specPanel.setVisibility(View.GONE); specPanel.setScaleX(1f); specPanel.setScaleY(1f); specPanel.setAlpha(1f); } } }).start();
+        }
+    }
+
+    // ---------------------------------------------------------------- 手势：对焦 / 曝光 / 小窗
+
+    private boolean inPip(float x, float y) {
+        if (paletteOpen || state.style != DualState.STYLE_PIP || stageW <= 1) return false;
+        float W = stageW, H = stageH;
+        float[] r = state.rect(1, W, H);
+        return x >= r[0] * W && x <= (r[0] + r[2]) * W && y >= r[1] * H && y <= (r[1] + r[3]) * H;
+    }
+
+    private void swapMain() { clearFocus(); state.backIsMain = !state.backIsMain; syncDial(); }
+
+    private void togglePipSize() {
+        final float from = state.pipW, to = from < .45f ? .55f : .32f;
+        prefs.pipW = to; prefs.save();
+        android.animation.ValueAnimator a = android.animation.ValueAnimator.ofFloat(from, to);
+        a.setDuration(220); a.setInterpolator(new OvershootInterpolator(1.2f));
+        a.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator v) {
+            state.pipW = (Float) v.getAnimatedValue(); } });
+        a.start();
+    }
+
+    private void tapAt(float x, float y) {
+        if (paletteOpen) return;
+        if (inPip(x, y)) { swapMain(); return; }
+        if (focusView.isLocked()) { clearFocus(); return; }          // 锁定后再点一下解除
+        focusAt(x, y, false);
+    }
+
+    private void dragBy(float mx, float my) {
+        if (gDownPip) {
+            float W = stageW, H = stageH, w = Math.round(W * state.pipW), h = Math.round(w * 4f / 3f), m = Math.round(W * 0.04f);
+            state.pipX = Math.min(1f, Math.max(0f, state.pipX + mx / Math.max(1f, W - w - 2 * m)));
+            state.pipY = Math.min(1f, Math.max(0f, state.pipY + my / Math.max(1f, H - h - 2 * m)));
+        } else if (!paletteOpen && focusView.isShown2()) {
+            focusView.setT(focusView.t() - my / dp(200)); focusView.keepAlive();
+            applyEv(focusCam, focusView.t());
+            rearmRelease(focusCam);
+        }
+    }
+
+    /** 点击点（取景框坐标）→ 传感器活动区域里的测光矩形。步骤：取景框 → 该画面的矩形 → 去掉封面裁切 → 按传感器方向旋转 → 流画面在活动区域里的位置 → 除以倍数 */
+    private MeteringRectangle[] region(int cam, float nx, float ny, float viewAsp) {
+        if (maxAf[cam] <= 0 && maxAe[cam] <= 0) return null;
+        Rect a = activeArr[cam];
+        if (a == null) return null;
+        int rot = senOri[cam];
+        float u = nx, v = ny;
+        if (cam == 1 && state.mirrorFront) u = 1f - u;
+        boolean sw = rot == 90 || rot == 270;
+        float iw = sw ? streamH[cam] : streamW[cam], ih = sw ? streamW[cam] : streamH[cam], ia = iw / ih;
+        if (viewAsp > ia) v = .5f + (v - .5f) * (ia / viewAsp); else u = .5f + (u - .5f) * (viewAsp / ia);
+        float su, sv;
+        switch (rot) {
+            case 90: su = v; sv = 1f - u; break;
+            case 180: su = 1f - u; sv = 1f - v; break;
+            case 270: su = 1f - v; sv = u; break;
+            default: su = u; sv = v;
+        }
+        float aw = a.width(), ah = a.height(), sa = (float) streamW[cam] / Math.max(1, streamH[cam]), cw, ch;
+        if (sa > aw / ah) { cw = aw; ch = aw / sa; } else { ch = ah; cw = ah * sa; }
+        float z = Math.max(1f, zoomCur[cam]); cw /= z; ch /= z;
+        float cx = a.left + aw / 2f + (su - .5f) * cw, cy = a.top + ah / 2f + (sv - .5f) * ch;
+        int half = Math.max(8, Math.round(Math.min(aw, ah) * .08f));
+        int l = Math.max(a.left, Math.min(a.right - 2 * half - 1, Math.round(cx) - half));
+        int t = Math.max(a.top, Math.min(a.bottom - 2 * half - 1, Math.round(cy) - half));
+        return new MeteringRectangle[]{new MeteringRectangle(l, t, 2 * half, 2 * half, MeteringRectangle.METERING_WEIGHT_MAX)};
+    }
+
+    private void focusAt(float x, float y, boolean lock) {
+        if (paletteOpen || stageW <= 1 || stageH <= 1) return;
+        float W = stageW, H = stageH;
+        int cam; float[] r;
+        if (state.style == DualState.STYLE_SPLIT && y >= H / 2f) { cam = 1 - mainCam(); r = state.rect(1, W, H); }
+        else { cam = mainCam(); r = state.rect(0, W, H); }
+        float nx = Math.max(0f, Math.min(1f, (x - r[0] * W) / Math.max(1f, r[2] * W)));
+        float ny = Math.max(0f, Math.min(1f, (y - r[1] * H) / Math.max(1f, r[3] * H)));
+        clearFocusState(1 - cam);
+        focusCam = cam;
+        focusRegion[cam] = region(cam, nx, ny, (r[2] * W) / Math.max(1f, r[3] * H));
+        afLock[cam] = aeLock[cam] = lock; evIdx[cam] = 0; evDragging[cam] = false;
+        focusView.show(x, y, stageW, stageH, lock);
+        pushReq(cam); triggerAf(cam);
+        if (lock) say("AE / AF 已锁定（再点一下解除）"); else rearmRelease(cam);
+    }
+
+    /** 没锁定时：框消失的同时让对焦回到连续自动（取消触发 + 去掉测光区域；曝光补偿保持到下次点击） */
+    private void rearmRelease(final int cam) {
+        final int tok = ++focusToken;
+        if (afLock[cam]) return;
+        ui.postDelayed(new Runnable() { @Override public void run() {
+            if (tok != focusToken || afLock[cam]) return;
+            focusRegion[cam] = null; cancelAf(cam); pushReq(cam);
+        } }, 2800);
+    }
+
+    private void clearFocusState(int cam) {
+        focusRegion[cam] = null; afLock[cam] = aeLock[cam] = false; evIdx[cam] = 0; evDragging[cam] = false;
+    }
+
+    /** 清掉所有对焦 / 锁定 / 曝光补偿（切换主画面、切布局、重启相机、打开调色板时） */
+    private void clearFocus() {
+        focusToken++; relockToken++;
+        if (focusView != null) focusView.hideNow();
+        for (int c = 0; c < 2; c++) {
+            boolean had = focusRegion[c] != null || aeLock[c] || afLock[c] || evIdx[c] != 0;
+            clearFocusState(c);
+            if (had) { cancelAf(c); pushReq(c); }
+        }
+    }
+
+    private void applyEv(int cam, float t) {
+        if (evLo[cam] == 0 && evHi[cam] == 0) return;
+        float s = (t - .5f) * 2f;
+        evIdx[cam] = Math.round(s >= 0 ? s * evHi[cam] : s * -evLo[cam]);
+        if (aeLock[cam]) {                      // 锁定中拖曝光：先解锁让它生效，松手约 0.9 秒后重新锁住
+            evDragging[cam] = true;
+            final int tok = ++relockToken, c = cam;
+            ui.postDelayed(new Runnable() { @Override public void run() { if (tok == relockToken) { evDragging[c] = false; pushReq(c); } } }, 900);
+        }
+        pushReq(cam);
+    }
+
+    private void triggerAf(final int cam) {
+        if (camH == null) return;
+        camH.post(new Runnable() { @Override public void run() {
+            try {
+                CaptureRequest.Builder rb = reqB[cam]; CameraCaptureSession cs = ses[cam];
+                if (rb == null || cs == null) return;
+                rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START);
+                cs.capture(rb.build(), null, camH);
+                rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+            } catch (Throwable ignore) {}
+        } });
+    }
+
+    private void cancelAf(final int cam) {
+        if (camH == null) return;
+        camH.post(new Runnable() { @Override public void run() {
+            try {
+                CaptureRequest.Builder rb = reqB[cam]; CameraCaptureSession cs = ses[cam];
+                if (rb == null || cs == null) return;
+                rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+                cs.capture(rb.build(), null, camH);
+                rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+            } catch (Throwable ignore) {}
+        } });
+    }
+
+    // ---------------------------------------------------------------- 发热 / 满帧
+
+    private void watchThermal() {
+        if (Build.VERSION.SDK_INT < 29) return;
+        try {
+            thermalListener = new PowerManager.OnThermalStatusChangedListener() {
+                @Override public void onThermalStatusChanged(final int status) { ui.post(new Runnable() { @Override public void run() { onThermal(status); } }); }
+            };
+            ((PowerManager) getSystemService(POWER_SERVICE)).addThermalStatusListener(thermalListener);
+        } catch (Throwable ignore) { thermalListener = null; }
+    }
+
+    /** 过热（严重及以上）且帧率 > 30：满帧画面运行录制没开就自动降到 30 帧；正在录像 / 拍实况就等结束后再降，不打断 */
+    private void onThermal(int status) {
+        if (Build.VERSION.SDK_INT < 29 || finished || prefs.fullRate) return;
+        if (status < PowerManager.THERMAL_STATUS_SEVERE || effFps <= 30) return;
+        if (recording || clipping) { pendingThrottle = true; return; }
+        throttleNow();
+    }
+
+    private void throttleNow() {
+        pendingThrottle = false; throttled = true; effFps = 30;
+        say("手机过热，已自动降到 30 帧保护手机（想一直满帧：更多设置 → 满帧画面运行录制）");
+        restart();
     }
 
     // ---------------------------------------------------------------- 摄像头 / 规格
@@ -543,6 +831,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 zoomMin[cam] = Math.max(0.1f, lo);
                 zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, 30f));
                 zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
+                Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+                senOri[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
+                Range<Integer> er = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+                if (er != null) { evLo[cam] = er.getLower(); evHi[cam] = er.getUpper(); }
+                android.util.Rational es = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+                evStep[cam] = es == null ? 1f : es.floatValue();
+                Integer ma = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF), me = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
+                maxAf[cam] = ma == null ? 0 : ma; maxAe[cam] = me == null ? 0 : me;
             } catch (Throwable ignore) {}
         }
         return true;
@@ -595,13 +891,21 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         recH = lg & ~1; recW = Math.round(lg * asp) & ~1;
     }
 
+    private void clearFocusAll() {
+        focusToken++; relockToken++;
+        if (focusView != null) focusView.hideNow();
+        for (int c = 0; c < 2; c++) clearFocusState(c);
+    }
+
     private void restartWithPrefs() {
         if (recording || clipping) { say("录像中不能改规格"); return; }
+        throttled = false; pendingThrottle = false;
         effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res); degradeCount = 0;
         restart();
     }
 
     private void restart() {
+        clearFocusAll();
         spinnerView.setVisibility(View.VISIBLE);
         closeCameras();
         ui.postDelayed(new Runnable() { @Override public void run() { tryOpen(); } }, 350);
@@ -694,11 +998,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     try {
                         CaptureRequest.Builder rb = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                         rb.addTarget(s);
-                        rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                        rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
                         reqB[cam] = rb;
+                        fillReq(cam, rb);
                         cs.setRepeatingRequest(rb.build(), null, camH);
-                        applyZoom(cam);
                     } catch (Exception e) { fail("error", "开启预览失败：" + e.getMessage()); return; }
                     synchronized (DualCameraActivity.this) { openedCount++; }
                     if (openedCount >= 2) ui.post(new Runnable() { @Override public void run() {
@@ -725,29 +1027,53 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
-    /** 把某个摄像头的倍数写进它的预览请求（Android 11+ 用缩放比，可以 <1 切超广角；更老的系统用裁切区域） */
-    private void applyZoom(final int cam) {
+    /** 把这颗摄像头当前的所有状态（连续对焦 / 帧率 / 倍数 / 测光区域 / AE 锁 / 曝光补偿）写进预览请求（相机线程调用） */
+    private void fillReq(int cam, CaptureRequest.Builder rb) {
+        rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+        rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
+        rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
+        float z = zoomCur[cam];
+        if (Build.VERSION.SDK_INT >= 30) rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
+        else {
+            Rect a = activeArr[cam];
+            if (a != null) {
+                float zz = Math.max(1f, z);
+                int w = Math.round(a.width() / zz), h = Math.round(a.height() / zz);
+                int l = a.left + (a.width() - w) / 2, t = a.top + (a.height() - h) / 2;
+                rb.set(CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h));
+            }
+        }
+        try {
+            MeteringRectangle[] mr = focusRegion[cam];
+            if (mr != null) {
+                if (maxAf[cam] > 0) rb.set(CaptureRequest.CONTROL_AF_REGIONS, mr);
+                if (maxAe[cam] > 0) rb.set(CaptureRequest.CONTROL_AE_REGIONS, mr);
+            } else {
+                MeteringRectangle[] none = {new MeteringRectangle(0, 0, 1, 1, 0)};      // 权重 0 = 忽略，回到相机默认测光 / 对焦区域
+                if (maxAf[cam] > 0) rb.set(CaptureRequest.CONTROL_AF_REGIONS, none);
+                if (maxAe[cam] > 0) rb.set(CaptureRequest.CONTROL_AE_REGIONS, none);
+            }
+            rb.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIdx[cam]);
+            rb.set(CaptureRequest.CONTROL_AE_LOCK, aeLock[cam] && !evDragging[cam]);
+        } catch (Throwable ignore) {}
+    }
+
+    /** 状态变了：在相机线程上重新写入并重发重复请求 */
+    private void pushReq(final int cam) {
         if (camH == null) return;
         camH.post(new Runnable() { @Override public void run() {
             try {
                 CaptureRequest.Builder rb = reqB[cam];
                 CameraCaptureSession cs = ses[cam];
                 if (rb == null || cs == null) return;
-                float z = zoomCur[cam];
-                if (Build.VERSION.SDK_INT >= 30) rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
-                else {
-                    Rect a = activeArr[cam];
-                    if (a != null) {
-                        float zz = Math.max(1f, z);
-                        int w = Math.round(a.width() / zz), h = Math.round(a.height() / zz);
-                        int l = a.left + (a.width() - w) / 2, t = a.top + (a.height() - h) / 2;
-                        rb.set(CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h));
-                    }
-                }
+                fillReq(cam, rb);
                 cs.setRepeatingRequest(rb.build(), null, camH);
             } catch (Throwable ignore) {}
         } });
     }
+
+    /** 倍数变了（转盘）：写进该摄像头的请求（Android 11+ 用缩放比，可以 <1 切超广角；更老的系统用裁切区域） */
+    private void applyZoom(final int cam) { pushReq(cam); }
 
     private void torch() {
         torchOn = !torchOn;
@@ -763,7 +1089,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         boolean both = gl.update(cam);
         if (!both || cam != mainCam()) return;        // 以主画面那颗摄像头的帧率出画面 / 编码
         if (lastBackMain != state.backIsMain) { lastBackMain = state.backIsMain; ui.post(new Runnable() { @Override public void run() { syncDial(); } }); }
-        gl.drawPreview();
+        // 帧率 > 35 时，没开「满帧画面运行录制」就只每隔一帧刷新一次屏幕（省电 / 少发热）；录制仍然每帧都编码
+        if (prefs.fullRate || camFps[cam] <= 35 || (++previewN & 1) == 0) gl.drawPreview();
         if (recording && recorder != null && gl.hasEncoder()) gl.drawEncoder(System.nanoTime() - recStartNs, recW, recH);
     }
 
@@ -804,6 +1131,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void startClip(final File photo) {
         clipping = true;
         say("实况录制中…（" + prefs.liveDur + " 秒）");
+        liveStart(prefs.liveDur);
         startRecording(true, prefs.liveDur);
         final File clip = recFile;
         ui.postDelayed(new Runnable() { @Override public void run() {
@@ -825,7 +1153,31 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             } else if (ok) { store(photo, false); store(clip, true); }
             else { say("实况视频失败，只保存照片"); store(photo, false); clip.delete(); }
             clipping = false; pending--;
+            final boolean fine = ok;
+            ui.post(new Runnable() { @Override public void run() { liveDone(fine); if (pendingThrottle && !recording) throttleNow(); } });
         } });
+    }
+
+    /** 实况计时（取景框左上角，受「实况计时显示」控制）：● 实况 1.2 / 3 秒 → 合成中 → 已拍完 */
+    private void liveStart(final int total) {
+        if (!prefs.liveTimer) return;
+        liveStartNs = System.nanoTime(); liveTotal = total; final int tok = ++liveToken;
+        liveTimerView.setBackground(DualUi.round(0xE6E61A1A, 13, this)); liveTimerView.setVisibility(View.VISIBLE);
+        liveTickRun = new Runnable() { @Override public void run() {
+            if (tok != liveToken) return;
+            float e = (System.nanoTime() - liveStartNs) / 1e9f;
+            liveTimerView.setText(e >= liveTotal ? "实况合成中…" : String.format(Locale.US, "● 实况  %.1f / %d 秒", e, liveTotal));
+            if (e < liveTotal) ui.postDelayed(this, 100);
+        } };
+        ui.post(liveTickRun);
+    }
+
+    private void liveDone(boolean ok) {
+        if (!prefs.liveTimer || liveTimerView.getVisibility() != View.VISIBLE) return;
+        final int tok = ++liveToken;
+        liveTimerView.setBackground(DualUi.round(ok ? 0xEB1E9E4C : 0xEB808080, 13, this));
+        liveTimerView.setText(ok ? "✓ 实况已拍完" : "实况失败");
+        ui.postDelayed(new Runnable() { @Override public void run() { if (tok == liveToken) liveTimerView.setVisibility(View.GONE); } }, 1800);
     }
 
     private void startRecording(final boolean silent, int unused) {
@@ -862,7 +1214,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         recording = false;
         final DualRecorder r = recorder; final File f = recFile;
         recorder = null;
-        ui.post(new Runnable() { @Override public void run() { paint(); timer.setVisibility(View.GONE); } });
+        ui.post(new Runnable() { @Override public void run() { paint(); timer.setVisibility(View.GONE); if (pendingThrottle && !prefs.fullRate) throttleNow(); } });
         pending++;
         glH.post(new Runnable() { @Override public void run() {
             try { gl.setEncoderSurface(null); } catch (Throwable ignore) {}

@@ -31,8 +31,8 @@ final class GlComposer {
     private int prog, aLocal, uRect, uUv, uTex, uTexMat, uCorner, uBorder, uAspect, uBorderCol, uAA;
     private int uGradeOn, uTnt, uAmt, uTone, uSat, uCon, uFade, uFa, uFcon, uFsat, uFhi, uFsh, uFtmp, uFcl, uFsp, uFgr, uFhal, uFseed, uFtint, uFshd, uOstep;
     /** 调色盘参数（GradeState.params() 的结果）；gradeOn=false 时不调色。可从任意线程改。 */
-    volatile float[] grade = new float[25];
-    volatile boolean gradeOn = false;
+    final float[][] gradeCam = {new float[25], new float[25]};   // 0 = 后置，1 = 前置：各用各的调色
+    final boolean[] gradeOnCam = new boolean[2];
     /** 小窗边框：0 无 / 1 白 / 2 黑 */
     volatile int borderMode = 0;
     volatile float pipCorner = 0.085f;
@@ -275,10 +275,10 @@ final class GlComposer {
         GLES20.glUniform3f(uBorderCol, bm == 2 ? 0f : 1f, bm == 2 ? 0f : 1f, bm == 2 ? 0f : 1f);
         GLES20.glUniform1f(uAA, 1.5f / ph);
         GLES20.glUniform1f(uAspect, asp);
-        boolean g = gradeOn;
+        boolean g = gradeOnCam[cam];
         GLES20.glUniform1f(uGradeOn, g ? 1f : 0f);
         if (g) {
-            float[] q = grade;
+            float[] q = gradeCam[cam];
             GLES20.glUniform3f(uTnt, q[0], q[1], q[2]);
             GLES20.glUniform1f(uAmt, q[3]); GLES20.glUniform1f(uTone, q[4]); GLES20.glUniform1f(uSat, q[5]);
             GLES20.glUniform1f(uCon, q[6]); GLES20.glUniform1f(uFade, q[8]);

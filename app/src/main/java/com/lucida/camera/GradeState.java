@@ -84,21 +84,40 @@ final class GradeState {
         return o;
     }
 
-    void load(SharedPreferences sp) {
-        pick(Math.max(0, Math.min(PRESETS.length - 1, sp.getInt("g_preset", 0))));
-        x = clamp(sp.getFloat("g_x", x), -1, 1); y = clamp(sp.getFloat("g_y", y), -1, 1); str = clamp(sp.getFloat("g_str", str), 0, 1);
-        tex = Math.max(0, Math.min(3, sp.getInt("g_tex", 0)));
-        tv = clamp(sp.getFloat("g_tv", 0), 0, 1); gr = clamp(sp.getFloat("g_gr", 0), 0, 1);
-        for (int i = 0; i < 4; i++) tvm[i] = clamp(sp.getFloat("g_tvm" + i, 0), 0, 1);
+    void load(SharedPreferences sp) { load(sp, "g_"); }
+    void save(SharedPreferences sp) { save(sp, "g_"); }
+
+    /** prefix：后置用 "g_"（沿用旧版存档），前置用 "gf_" */
+    void load(SharedPreferences sp, String k) {
+        pick(Math.max(0, Math.min(PRESETS.length - 1, sp.getInt(k + "preset", 0))));
+        x = clamp(sp.getFloat(k + "x", x), -1, 1); y = clamp(sp.getFloat(k + "y", y), -1, 1); str = clamp(sp.getFloat(k + "str", str), 0, 1);
+        tex = Math.max(0, Math.min(3, sp.getInt(k + "tex", 0)));
+        tv = clamp(sp.getFloat(k + "tv", 0), 0, 1); gr = clamp(sp.getFloat(k + "gr", 0), 0, 1);
+        for (int i = 0; i < 4; i++) tvm[i] = clamp(sp.getFloat(k + "tvm" + i, 0), 0, 1);
     }
 
-    void save(SharedPreferences sp) {
+    void save(SharedPreferences sp, String k) {
         SharedPreferences.Editor e = sp.edit();
-        e.putInt("g_preset", preset).putFloat("g_x", x).putFloat("g_y", y).putFloat("g_str", str)
-                .putInt("g_tex", tex).putFloat("g_tv", tv).putFloat("g_gr", gr);
-        for (int i = 0; i < 4; i++) e.putFloat("g_tvm" + i, tvm[i]);
+        e.putInt(k + "preset", preset).putFloat(k + "x", x).putFloat(k + "y", y).putFloat(k + "str", str)
+                .putInt(k + "tex", tex).putFloat(k + "tv", tv).putFloat(k + "gr", gr);
+        for (int i = 0; i < 4; i++) e.putFloat(k + "tvm" + i, tvm[i]);
         e.apply();
     }
+
+    /** 整套复制（「同时」调整时把当前显示的那一套同步给另一颗摄像头） */
+    void copyFrom(GradeState o) {
+        preset = o.preset; x = o.x; y = o.y; str = o.str; tex = o.tex; tv = o.tv; gr = o.gr;
+        System.arraycopy(o.tvm, 0, tvm, 0, 4);
+    }
+
+    /** 是否和「标准、无质感、无颗粒」完全一样 */
+    boolean isNeutral() { return preset == 0 && x == 0 && y == 0 && str >= .999f && tv < .004f && gr < .004f; }
+
+    /** 各条滑条的「复位」：回到当前预设自带的值 / 0 */
+    void resetPad() { Preset p = cur(); x = p.x(); y = p.y(); }
+    void resetStr() { str = cur().str(); }
+    void resetTv() { tv = 0; tvm[tex] = 0; }
+    void resetGr() { gr = 0; }
 
     void reset() { pick(0); tex = 0; tv = 0; gr = 0; }
 

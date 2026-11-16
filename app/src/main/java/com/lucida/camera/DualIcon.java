@@ -17,6 +17,8 @@ final class DualIcon extends View {
     private final RectF r = new RectF();
     int tintOn = 0xFFFFD60A, tintOff = 0xFFFFFFFF, bgColor = 0x29FFFFFF;
     int shapeStyle = 0;
+    float padX = 0f, padY = 0f;      // 调色板图标：中心大点的位置（-1…1，跟着色盘落点走）
+    void setPad(float x, float y) { padX = x; padY = y; invalidate(); }
 
     DualIcon(Context c, int kind) {
         super(c);
@@ -31,7 +33,14 @@ final class DualIcon extends View {
     @Override
     protected void onDraw(Canvas c) {
         float W = getWidth(), H = getHeight(), s = Math.min(W, H), cx = W / 2, cy = H / 2;
-        if (round && bgColor != 0) { bg.setColor(bgColor); bg.setStyle(Paint.Style.FILL); c.drawCircle(cx, cy, s / 2, bg); }
+        if (round && bgColor != 0) {
+            bg.setStyle(Paint.Style.FILL);
+            if (DualUi.glass) {
+                bg.setColor(0x33FFFFFF); c.drawCircle(cx, cy, s / 2, bg);
+                bg.setStyle(Paint.Style.STROKE); bg.setStrokeWidth(Math.max(1f, s * 0.026f)); bg.setColor(0x8CFFFFFF);
+                c.drawCircle(cx, cy, s / 2 - bg.getStrokeWidth() / 2, bg); bg.setStyle(Paint.Style.FILL);
+            } else { bg.setColor(bgColor); c.drawCircle(cx, cy, s / 2, bg); }
+        }
         int col = on ? tintOn : tintOff;
         if (!isEnabled()) col = (col & 0x00FFFFFF) | 0x66000000;
         p.setColor(col); p.setStrokeWidth(Math.max(2f, s * 0.055f));
@@ -50,12 +59,21 @@ final class DualIcon extends View {
                 r.set(cx - u * 1.6f, cy - u * 1.6f, cx + u * 1.6f, cy + u * 1.6f);
                 p.setPathEffect(new android.graphics.DashPathEffect(new float[]{s * .04f, s * .06f}, 0));
                 c.drawOval(r, p); p.setPathEffect(null); break;
-            case PALETTE:
-                for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
-                    if (Math.abs(i) + Math.abs(j) == 2) continue;
-                    p.setStyle(Paint.Style.FILL); c.drawCircle(cx + i * u * .85f, cy + j * u * .85f, u * .3f, p);
-                }
-                p.setStyle(Paint.Style.STROKE); c.drawCircle(cx, cy, u * 1.55f, p); break;
+            case PALETTE: {
+                // 和主界面一样：圆角方框 + 5×5 点阵，中心大点跟着色盘落点移动；开启黄色、关闭白色
+                float half = s * 0.34f;
+                p.setStrokeWidth(Math.max(2f, s * 0.05f));
+                r.set(cx - half, cy - half, cx + half, cy + half);
+                c.drawRoundRect(r, half * 0.56f, half * 0.56f, p);
+                float in = half * 0.6f, step = in * 2 / 4, dot = s * 0.03f;
+                p.setStyle(Paint.Style.FILL);
+                int base = p.getColor(); p.setColor((base & 0x00FFFFFF) | 0xD9000000);
+                for (int i = 0; i < 5; i++) for (int j = 0; j < 5; j++) c.drawCircle(cx - in + step * i, cy - in + step * j, dot, p);
+                p.setColor(base);
+                c.drawCircle(cx + padX * in, cy - padY * in, s * 0.075f, p);
+                p.setStyle(Paint.Style.STROKE);
+                break;
+            }
             case GEAR:
                 c.drawCircle(cx, cy, u * .55f, p);
                 for (int i = 0; i < 8; i++) {
