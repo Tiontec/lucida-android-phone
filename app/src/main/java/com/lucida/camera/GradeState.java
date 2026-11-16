@@ -8,32 +8,20 @@ import android.content.SharedPreferences;
  */
 final class GradeState {
     static final class Preset {
-        final String sid, name; final int t, c, s; final float[] tint, cast; final float ca, fade, con;
-        Preset(String sid, String name, int t, int c, int s, float[] tint, float[] cast, float ca, float fade, float con) {
-            this.sid = sid; this.name = name; this.t = t; this.c = c; this.s = s; this.tint = tint; this.cast = cast; this.ca = ca; this.fade = fade; this.con = con;
+        final String sid, name, grp; final int t, c, s; final float[] tint, cast, tint2; final float ca, fade, con;
+        Preset(String sid, String name, String grp, int t, int c, int s, float[] tint, float[] cast, float ca, float fade, float con, float[] tint2) {
+            this.sid = sid; this.name = name; this.grp = grp; this.t = t; this.c = c; this.s = s; this.tint = tint; this.cast = cast;
+            this.ca = ca; this.fade = fade; this.con = con; this.tint2 = tint2;
         }
         float x() { return c / 100f; }
         float y() { return t / 100f; }
         float str() { return s / 100f; }
     }
 
-    static final Preset[] PRESETS = {
-        new Preset("standard", "标准", 0, 0, 100, new float[]{.38f, .46f, .62f}, new float[]{1, 1, 1}, 0, 0, 0),
-        new Preset("pearl", "珠光", 18, 0, 100, new float[]{.62f, .2f, .3f}, new float[]{1, .66f, .76f}, .28f, .02f, 0),
-        new Preset("coolrose", "冷调玫瑰色", -100, -100, 75, new float[]{.42f, .5f, .72f}, new float[]{.86f, .7f, .92f}, .42f, 0, 0),
-        new Preset("amber", "琥珀色", 20, 20, 100, new float[]{.72f, .45f, .2f}, new float[]{1, .7f, .3f}, .55f, 0, 0),
-        new Preset("gold", "金色", 20, 10, 85, new float[]{.85f, .58f, .08f}, new float[]{1, .82f, .3f}, .5f, 0, 0),
-        new Preset("rosegold", "玫瑰金色", -20, -20, 75, new float[]{.66f, .4f, .3f}, new float[]{1, .72f, .62f}, .45f, 0, 0),
-        new Preset("natural", "自然", -70, -15, 100, new float[]{.34f, .4f, .58f}, new float[]{.78f, .84f, .94f}, .12f, 0, 0),
-        new Preset("cozy", "温馨", -75, -20, 100, new float[]{.84f, .42f, .12f}, new float[]{1, .72f, .74f}, .38f, 0, 0),
-        new Preset("calm", "安静", 50, 45, 100, new float[]{.46f, .6f, .5f}, new float[]{1, .9f, .66f}, .3f, 0, 0),
-        new Preset("ethereal", "缥缈", 68, -15, 100, new float[]{.2f, .42f, .78f}, new float[]{.72f, .78f, 1}, .2f, .06f, 0),
-        new Preset("contrast", "反差色", -76, 19, 100, new float[]{.1f, .55f, .7f}, new float[]{.55f, .82f, .96f}, .22f, 0, .28f),
-        new Preset("radiant", "耀目", 35, 30, 100, new float[]{.3f, .5f, .72f}, new float[]{.88f, .78f, 1}, .22f, 0, 0),
-        new Preset("vivid", "鲜明", -30, 33, 100, new float[]{.78f, .2f, .2f}, new float[]{1, 1, 1}, 0, 0, .16f),
-    };
-    static final String[] TEX_ID = {"std", "soft", "halo", "film"};
-    static final String[] TEX_NAME = {"标准", "柔肤", "光晕", "胶片"};
+    /** 预设和质感参数都来自 SharedData（由 shared/lucida-shared.json 生成，和网页 / iOS 同一份） */
+    static final Preset[] PRESETS = SharedData.PRESETS;
+    static final String[] TEX_ID = SharedData.TEX_ID;
+    static final String[] TEX_NAME = SharedData.TEX_NAME;
 
     int preset = 0;
     float x = 0, y = 0, str = 1;      // 色彩（横）/ 色调（纵）/ 强度，-1…1 / 0…1
@@ -62,22 +50,19 @@ final class GradeState {
         Preset p = cur();
         float[] o = new float[25];
         o[0] = p.cast[0]; o[1] = p.cast[1]; o[2] = p.cast[2];
-        o[3] = p.ca * str; o[4] = y * str * .6f; o[5] = x * str * .8f; o[6] = p.con * str; o[7] = 0; o[8] = p.fade * str;
-        float con = 0, sat = 0, hi = 0, sh = 0, tmp = 0, cl = 0, sp = 0, g = 0, hal = 0;
-        float[] tint = {0, 0, 0}, shd = {0, 0, 0};
-        boolean on = tv > .004f;
+        o[3] = p.ca * str; o[4] = y * str * SharedData.TONE_K; o[5] = x * str * SharedData.SAT_K; o[6] = p.con * str; o[7] = 0; o[8] = p.fade * str * SharedData.FADE_K;
+        float[] k = new float[9];     // con sat hi sh tmp cl sp gr hal（和 SharedData.TEX_KEYS 同序）
+        float[] shd = {0, 0, 0}, tint = {0, 0, 0};
+        boolean on = tv > SharedData.TEX_ON;
         if (on) {
-            float v = tv;
-            switch (tex) {
-                case 0: sp = .9f * v; cl = .55f * v; con = .06f * v; sat = .05f * v; break;
-                case 1: sp = -1.0f * v; cl = -.9f * v; con = -.06f * v; sh = .1f * v; sat = -.03f * v; break;
-                case 2: hal = 1.25f * v; cl = -.5f * v; hi = -.08f * v; sat = .05f * v; break;
-                default: g = .2f * v; con = .14f * v; sat = -.14f * v; hi = -.12f * v; tmp = .05f * v;
-                    shd[0] = -.02f * v; shd[1] = .014f * v; shd[2] = .03f * v; break;
-            }
+            int ti = Math.max(0, Math.min(SharedData.TEX_COEF.length - 1, tex));
+            for (int i = 0; i < 9; i++) k[i] = SharedData.TEX_COEF[ti][i] * tv;
+            for (int i = 0; i < 3; i++) shd[i] = SharedData.TEX_SHD[ti][i] * tv;
         }
-        g += this.gr * .3f;
-        boolean fa = on || this.gr >= .004f;
+        k[7] += this.gr * SharedData.GRAIN_K;
+        boolean fa = on || this.gr >= SharedData.GRAIN_ON;
+        if (!fa) k[7] = 0;                     // 和网页一致：没启用滤镜层时整组参数为 0
+        float con = k[0], sat = k[1], hi = k[2], sh = k[3], tmp = k[4], cl = k[5], sp = k[6], g = k[7], hal = k[8];
         o[9] = fa ? 1 : 0;
         o[10] = con; o[11] = sat; o[12] = hi; o[13] = sh; o[14] = tmp; o[15] = cl; o[16] = sp; o[17] = g; o[18] = hal;
         o[19] = tint[0]; o[20] = tint[1]; o[21] = tint[2]; o[22] = shd[0]; o[23] = shd[1]; o[24] = shd[2];

@@ -6,8 +6,8 @@ android {
         applicationId 'com.lucida.camera'
         minSdk 24
         targetSdk 34
-        versionCode 112100
-        versionName '11.2.1'
+        versionCode 113000
+        versionName '11.3.0'
     }
     buildFeatures { buildConfig true }
     signingConfigs {

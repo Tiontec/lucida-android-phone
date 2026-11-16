@@ -1,3 +1,8 @@
+# 状态（11.3.0 · 长期计划 A1 共享数据）
+- 本版只做「共享数据」：预设 / 质感 / 颗粒 / 强度系数统一放在 `shared/lucida-shared.json`，网页、iOS（SharedData.swift）、安卓（SharedData.java）都由 `tools/gen_shared.py` 生成；用户可见功能不变。
+- 已验证：网页新旧版 28080 组参数完全一致；安卓 GradeState 与网页 22464 组最大误差 4e-8（在 JVM 上实际跑过）；iOS 生成文件与 json 逐项一致（脚本解析对照），**但 Swift 未编译、未运行**。
+- 进度见 PLAN.md。
+
 # 状态（11.2.1）诚实说明
 - **未做**：从未用 Gradle 打出 APK、从未在任何安卓设备 / 模拟器运行。本版所有安卓代码只用 android.jar(API 33) 的 javac 编译通过（唯一的报错是 Gradle 生成的 BuildConfig，属正常）。**必须真机验证。**
 - 11.2.1 安卓新增 / 改动（对照苹果 11.2.1）：
