@@ -66,7 +66,14 @@ public final class MediaSaver {
                     dst = new File(folder, dot > 0 ? name.substring(0, dot) + "_" + i + name.substring(dot) : name + "_" + i);
                 }
                 try (InputStream in = new FileInputStream(src); OutputStream out = new FileOutputStream(dst)) { copy(in, out); }
-                android.media.MediaScannerConnection.scanFile(c, new String[]{dst.getAbsolutePath()}, new String[]{mime}, null);
+                final Uri[] got = new Uri[1];
+                final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+                android.media.MediaScannerConnection.scanFile(c, new String[]{dst.getAbsolutePath()}, new String[]{mime},
+                        new android.media.MediaScannerConnection.OnScanCompletedListener() {
+                            @Override public void onScanCompleted(String path, Uri uri) { got[0] = uri; latch.countDown(); }
+                        });
+                try { latch.await(3, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignore) {}
+                r.uri = got[0];
                 r.name = dst.getName();
             }
             r.ok = true;

@@ -17,15 +17,19 @@ import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.util.Log;
 import android.util.Range;
 import android.util.Size;
 import android.view.GestureDetector;
@@ -98,6 +102,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     // 当前有效规格（可能比设置里选的低）
     private int effTier, effFps;
     private String infoText = "";
+    // ---- 11.5.0：防「画面不动」——请求分级 + 看门狗 + 诊断（联发科 / ColorOS 机型上，多余的请求项可能让相机一帧都不出）----
+    private volatile int reqStage = 0;                       // 0 完整请求；1 最简请求（不带测光区域 / 曝光补偿 / AE 锁）；2 再去掉帧率范围
+    private final long[] frameCnt = new long[2], capCnt = new long[2], capFail = new long[2];
+    private volatile long drawnCnt;
+    private long wdLastDrawn = -1, wdSince;
+    private int wdTries;
+    private boolean wdRunning;
+    private final CameraCaptureSession.CaptureCallback[] capCb = new CameraCaptureSession.CaptureCallback[2];
 
     // 界面
     private FrameLayout root, bottomBar, stageTouch;
@@ -111,23 +123,36 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private TextView thumbCount;
     private DualPalette palette;
     private DualDots dots;
-    private TextView liveTimerView;
+    private LinearLayout liveStack;
+    // 实况连拍：每张各自一行进度（取景框左上角），全部完成后一起收起（只在界面线程读写）
+    private static final int MAX_LIVE = 3;
+    private static final class LiveTask {
+        final int n, total; final File photo;
+        File clip; DualRecorder rec; GlComposer.Enc enc;
+        long t0Ns = System.nanoTime();
+        int phase;                       // 0 录制中 · 1 合成保存中 · 2 完成 · 3 失败
+        String note = "";
+        TextView row;
+        LiveTask(int n, int total, File photo) { this.n = n; this.total = total; this.photo = photo; }
+    }
+    private final ArrayList<LiveTask> liveTasks = new ArrayList<LiveTask>();
+    private int liveSeq, liveHideToken;
+    private boolean liveTicking;
+    private static final int REQ_DEL = 31;
+    private Runnable delDone;
     private DualFocusView focusView;
     // 对焦 / 曝光（每颗摄像头各一份）
     private final MeteringRectangle[][] focusRegion = new MeteringRectangle[2][];
     private final int[] maxAf = new int[2], maxAe = new int[2];
     private final boolean[] evDragging = new boolean[2];
-    private int focusToken, relockToken, toastToken, liveToken;
+    private int focusToken, relockToken, toastToken;
     private GestureDetector gd;
     private boolean gDownPip, specOpen, lastGlass;
     private LinearLayout hintStack;
-    private long liveStartNs;
-    private int liveTotal;
     private final boolean[] afLock = new boolean[2], aeLock = new boolean[2];
     private final int[] evIdx = new int[2], evLo = new int[2], evHi = new int[2], senOri = {90, 270};
     private final float[] evStep = {1f, 1f};
     private int focusCam = 0, previewN = 0;
-    private Runnable liveTickRun;
     private PowerManager.OnThermalStatusChangedListener thermalListener;
     private boolean throttled, pendingThrottle;
     private View overlay;
@@ -161,6 +186,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
         syncDial();
         watchThermal();
+        refreshThumb();
     }
 
     @Override
@@ -177,7 +203,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
 
-    @Override protected void onResume() { super.onResume(); immersive(); if (glReady) tryOpen(); }
+    @Override protected void onResume() {
+        super.onResume(); immersive(); if (glReady) tryOpen();
+        if (overlay instanceof DualAlbum) ((DualAlbum) overlay).reload();      // 从系统相册回来：那边删掉的这里也要消失
+    }
 
     @Override
     protected void onPause() {
@@ -338,13 +367,11 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
         // 取景框左上角：实况计时 + 提示条（以后所有提示都放这里）。毛玻璃界面开着时是毛玻璃，关着时是普通深色面板
         hintStack = new LinearLayout(this); hintStack.setOrientation(LinearLayout.VERTICAL);
-        liveTimerView = DualUi.label(this, "", 13, Color.WHITE); liveTimerView.setGravity(Gravity.CENTER);
-        liveTimerView.setPadding(dp(12), dp(4), dp(12), dp(4)); liveTimerView.setVisibility(View.GONE);
-        liveTimerView.setBackground(DualUi.round(0xE6E61A1A, 13, this));
+        liveStack = new LinearLayout(this); liveStack.setOrientation(LinearLayout.VERTICAL); liveStack.setVisibility(View.GONE);
         toast = DualUi.label(this, "", 13, Color.WHITE); toast.setGravity(Gravity.CENTER_VERTICAL);
         toast.setPadding(dp(12), dp(7), dp(12), dp(7)); toast.setVisibility(View.GONE);
         styleToast();
-        hintStack.addView(liveTimerView, new LinearLayout.LayoutParams(-2, -2));
+        hintStack.addView(liveStack, new LinearLayout.LayoutParams(-2, -2));
         LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2); tlp.topMargin = dp(6);
         hintStack.addView(toast, tlp);
         root.addView(hintStack, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.LEFT));
@@ -504,7 +531,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         gradeBack.save(prefs.sp, "g_"); gradeFront.save(prefs.sp, "gf_");
         GradeState sh = palette != null ? palette.shown() : gradeBack;
         if (readout != null) {
-            readout.setText("色调 " + Math.round(sh.y * 100) + "   颜色 " + Math.round(sh.x * 100) + "   调色盘 " + Math.round(sh.str * 100));
+            readout.setText("色调 " + sgn(sh.y) + "   颜色 " + sgn(sh.x) + "   调色盘 " + Math.round(sh.str * 100));
             int[] ord = PresetOrder.indices(this);
             int pos = PresetOrder.posOf(ord, sh.preset);
             presetLabel.setText(sh.cur().name + "  (" + (pos + 1) + "/" + ord.length + ")");
@@ -512,6 +539,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
         if (btnPalette != null) { btnPalette.setPad(sh.x, sh.y); syncButtons(); }
     }
+
+    /** 数值显示（和主页面一样：0 显示成「00」，负数带负号） */
+    private static String sgn(float v) { int n = Math.round(v * 100); return n == 0 ? "00" : String.valueOf(n); }
 
     /** 左右滑：按「预设顺序」往后 / 往前一个 */
     private void stepPreset(int dir) {
@@ -561,10 +591,41 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void openAlbum() {
         if (overlay != null) return;
-        final DualAlbum a = new DualAlbum(this, new ArrayList<File>(itemFiles), new ArrayList<Boolean>(itemVideo),
-                new Runnable() { @Override public void run() { closeOverlay(); } },
+        final DualAlbum a = new DualAlbum(this, new DualAlbum.Host() {
+                @Override public void requestDelete(java.util.List<Uri> uris, Runnable done) { askDelete(uris, done); } },
+                new Runnable() { @Override public void run() { closeOverlay(); refreshThumb(); } },
                 new Runnable() { @Override public void run() { closeOverlay(); closeTapped(); } });
         overlay = a; root.addView(a, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    /** 不是本 App 创建的相册项，删除要系统弹确认框（Android 11+） */
+    private void askDelete(java.util.List<Uri> uris, Runnable done) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                android.app.PendingIntent pi = android.provider.MediaStore.createDeleteRequest(getContentResolver(), uris);
+                delDone = done;
+                startIntentSenderForResult(pi.getIntentSender(), REQ_DEL, null, 0, 0, 0);
+                return;
+            } catch (Throwable t) { say("无法删除：" + t.getMessage()); }
+        } else say("这几项不是澄影创建的，系统不允许在这里删除");
+        done.run();
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_DEL && delDone != null) { Runnable r = delDone; delDone = null; r.run(); }
+    }
+
+    /** 相册入口的缩略图 = 系统相册里最近一张双摄拍的，右下角数字 = 总数（重开 App 也在） */
+    private void refreshThumb() {
+        new Thread(new Runnable() { @Override public void run() {
+            final java.util.ArrayList<DualLibrary.Entry> l = DualLibrary.load(DualCameraActivity.this);
+            final Bitmap tb = l.isEmpty() ? null : DualAlbum.thumb(DualCameraActivity.this, l.get(0).uri, l.get(0).video, 200);
+            ui.post(new Runnable() { @Override public void run() {
+                thumbImg.setImageBitmap(tb);
+                thumbCount.setText(String.valueOf(l.size())); thumbCount.setVisibility(l.isEmpty() ? View.GONE : View.VISIBLE);
+            } });
+        } }).start();
     }
 
     private void closeOverlay() { if (overlay != null) { root.removeView(overlay); overlay = null; } }
@@ -611,19 +672,21 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         specOpen = open;
         specPanel.animate().cancel();
         if (!DualUi.glass) { specPanel.setScaleX(1f); specPanel.setScaleY(1f); specPanel.setAlpha(1f); specPanel.setVisibility(open ? View.VISIBLE : View.GONE); return; }
-        specPanel.setPivotX(dp(36)); specPanel.setPivotY(0f);
+        // 缩放支点 = 「帧率画质」胶囊下沿的中点：弹出从它下面冒出来，收起也缩回到它下面（不盖住它）
+        specPanel.setPivotX(specPill.getX() + specPill.getWidth() / 2f - specPanel.getX());
+        specPanel.setPivotY(specPill.getY() + specPill.getHeight() - 2 * getResources().getDisplayMetrics().density - specPanel.getY());
         if (open) {
             specPanel.setVisibility(View.VISIBLE);
-            specPanel.setScaleX(.3f); specPanel.setScaleY(.15f); specPanel.setAlpha(0f);
+            specPanel.setScaleX(.1f); specPanel.setScaleY(.1f); specPanel.setAlpha(0f);
             specPanel.animate().alpha(1f).setDuration(160).start();
-            android.animation.ValueAnimator ax = android.animation.ValueAnimator.ofFloat(.3f, 1f), ay = android.animation.ValueAnimator.ofFloat(.15f, 1f);
+            android.animation.ValueAnimator ax = android.animation.ValueAnimator.ofFloat(.1f, 1f), ay = android.animation.ValueAnimator.ofFloat(.1f, 1f);
             ax.setDuration(520); ax.setInterpolator(new OvershootInterpolator(2.2f));
             ay.setDuration(560); ay.setStartDelay(40); ay.setInterpolator(new OvershootInterpolator(3.2f));
             ax.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleX((Float) a.getAnimatedValue()); } });
             ay.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleY((Float) a.getAnimatedValue()); } });
             ax.start(); ay.start();
         } else {
-            specPanel.animate().scaleX(.35f).scaleY(.12f).alpha(0f).setDuration(230).setInterpolator(new AccelerateInterpolator(1.5f))
+            specPanel.animate().scaleX(.1f).scaleY(.1f).alpha(0f).setDuration(260).setInterpolator(new AccelerateInterpolator(1.4f))
                     .withEndAction(new Runnable() { @Override public void run() {
                         if (!specOpen) { specPanel.setVisibility(View.GONE); specPanel.setScaleX(1f); specPanel.setScaleY(1f); specPanel.setAlpha(1f); } } }).start();
         }
@@ -956,6 +1019,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return;
         camsOpened = true; openedCount = 0;
         final int myGen = ++gen;
+        frameCnt[0] = frameCnt[1] = capCnt[0] = capCnt[1] = capFail[0] = capFail[1] = 0;
+        wdLastDrawn = drawnCnt; wdSince = System.currentTimeMillis();
+        startWatchdog();
         int[][] pl = {plan(0), plan(1)};
         for (int cam = 0; cam < 2; cam++) {
             streamW[cam] = pl[cam][0]; streamH[cam] = pl[cam][1]; camFps[cam] = pl[cam][2];
@@ -972,11 +1038,19 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         if (myGen != gen) { d.close(); return; }
                         dev[which] = d; startSession(which, myGen);
                     }
-                    @Override public void onDisconnected(CameraDevice d) { d.close(); if (myGen == gen) { dev[which] = null; if (!finished) say("摄像头被占用或断开"); } }
+                    @Override public void onDisconnected(CameraDevice d) {
+                        d.close();
+                        if (myGen != gen) return;
+                        dev[which] = null;
+                        if (finished) return;
+                        // 还没出画面就被系统断开 = 这台手机不让前后摄像头同时开（后开的把先开的顶掉）；已经在出画面才断开 = 被别的应用占用
+                        if (frameCnt[0] == 0 || frameCnt[1] == 0) fail("unsupported", "系统在开前后摄像头时断开了" + (which == 0 ? "后置" : "前置") + "摄像头（这台手机不允许同时开前后摄像头）。" + diag());
+                        else say("摄像头被占用或断开");
+                    }
                     @Override public void onError(CameraDevice d, int err) {
                         d.close(); if (myGen != gen) return; dev[which] = null;
                         boolean busy = err == CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE || err == CameraDevice.StateCallback.ERROR_CAMERA_IN_USE;
-                        fail(busy ? "unsupported" : "error", busy ? "系统不允许前后摄像头同时工作（硬件限制）" : "摄像头出错（代码 " + err + "）");
+                        fail(busy ? "unsupported" : "error", (busy ? "系统不允许前后摄像头同时工作（硬件限制）" : "摄像头出错（代码 " + err + "）") + "。" + diag());
                     }
                 }, camH);
             } catch (Exception e) {
@@ -1001,8 +1075,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         rb.addTarget(s);
                         reqB[cam] = rb;
                         fillReq(cam, rb);
-                        cs.setRepeatingRequest(rb.build(), null, camH);
-                    } catch (Exception e) { fail("error", "开启预览失败：" + e.getMessage()); return; }
+                        cs.setRepeatingRequest(rb.build(), capCallback(cam), camH);
+                    } catch (Exception e) { fail("error", "开启预览失败：" + e.getMessage() + "。" + diag()); return; }
                     synchronized (DualCameraActivity.this) { openedCount++; }
                     if (openedCount >= 2) ui.post(new Runnable() { @Override public void run() {
                         spinnerView.setVisibility(View.GONE);
@@ -1012,7 +1086,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 }
                 @Override public void onConfigureFailed(CameraCaptureSession cs) {
                     if (myGen != gen) return;
-                    ui.post(new Runnable() { @Override public void run() { degrade("会话配置失败"); } });
+                    final String dg = diag();
+                    ui.post(new Runnable() { @Override public void run() { degrade("会话配置失败 " + dg); } });
                 }
             }, camH);
         } catch (Exception e) { ui.post(new Runnable() { @Override public void run() { degrade("建立会话失败：" + e0(e)); } }); }
@@ -1031,8 +1106,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     /** 把这颗摄像头当前的所有状态（连续对焦 / 帧率 / 倍数 / 测光区域 / AE 锁 / 曝光补偿）写进预览请求（相机线程调用） */
     private void fillReq(int cam, CaptureRequest.Builder rb) {
         rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-        rb.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE);
-        rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
+        if (reqStage < 2) rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
         float z = zoomCur[cam];
         if (Build.VERSION.SDK_INT >= 30) rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
         else {
@@ -1044,19 +1118,63 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 rb.set(CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h));
             }
         }
+        // 下面这些「点按对焦 / 曝光补偿 / 锁定」只在真的用到时才写进请求；平时一律不写（写 null = 清掉）。
+        // 以前平时也写「权重 0 的测光区域 / 曝光补偿 0 / AE 锁 关」，个别机型（联发科 + ColorOS）会因此一帧都不出。
         try {
             MeteringRectangle[] mr = focusRegion[cam];
-            if (mr != null) {
-                if (maxAf[cam] > 0) rb.set(CaptureRequest.CONTROL_AF_REGIONS, mr);
-                if (maxAe[cam] > 0) rb.set(CaptureRequest.CONTROL_AE_REGIONS, mr);
-            } else {
-                MeteringRectangle[] none = {new MeteringRectangle(0, 0, 1, 1, 0)};      // 权重 0 = 忽略，回到相机默认测光 / 对焦区域
-                if (maxAf[cam] > 0) rb.set(CaptureRequest.CONTROL_AF_REGIONS, none);
-                if (maxAe[cam] > 0) rb.set(CaptureRequest.CONTROL_AE_REGIONS, none);
-            }
-            rb.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIdx[cam]);
-            rb.set(CaptureRequest.CONTROL_AE_LOCK, aeLock[cam] && !evDragging[cam]);
+            rb.set(CaptureRequest.CONTROL_AF_REGIONS, mr != null && maxAf[cam] > 0 ? mr : null);
+            rb.set(CaptureRequest.CONTROL_AE_REGIONS, mr != null && maxAe[cam] > 0 ? mr : null);
+            rb.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIdx[cam] != 0 ? Integer.valueOf(evIdx[cam]) : null);
+            rb.set(CaptureRequest.CONTROL_AE_LOCK, aeLock[cam] && !evDragging[cam] ? Boolean.TRUE : null);
         } catch (Throwable ignore) {}
+    }
+
+    private CameraCaptureSession.CaptureCallback capCallback(final int cam) {
+        if (capCb[cam] == null) capCb[cam] = new CameraCaptureSession.CaptureCallback() {
+            @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult res) { capCnt[cam]++; }
+            @Override public void onCaptureFailed(CameraCaptureSession s, CaptureRequest r, CaptureFailure f) { capFail[cam]++; }
+        };
+        return capCb[cam];
+    }
+
+    private String diag() {
+        return "［诊断］后置帧 " + frameCnt[0] + " / 前置帧 " + frameCnt[1] + "，请求完成 " + capCnt[0] + "/" + capCnt[1]
+                + "，请求失败 " + capFail[0] + "/" + capFail[1] + "，会话 " + (ses[0] != null ? "后✓" : "后✗") + (ses[1] != null ? "前✓" : "前✗")
+                + "，请求级别 " + reqStage + "，画面 " + effTier + "档@" + effFps + "，" + infoText + "，" + Build.MANUFACTURER + " " + Build.MODEL + " Android " + Build.VERSION.SDK_INT;
+    }
+
+    // ---------------------------------------------------------------- 看门狗：画面不动就自动换更稳妥的方式重来，最后才报「不支持」
+
+    private void startWatchdog() {
+        if (wdRunning) return;
+        wdRunning = true;
+        ui.postDelayed(new Runnable() { @Override public void run() { watchdogTick(); } }, 1000);
+    }
+
+    private void watchdogTick() {
+        if (finished || failedReported) { wdRunning = false; return; }
+        if (!camsOpened) { wdRunning = false; return; }        // 摄像头已经关了（暂停 / 重启中）；下次 tryOpen 再起
+        long now = System.currentTimeMillis(), dr = drawnCnt;
+        if (dr != wdLastDrawn) { wdLastDrawn = dr; wdSince = now; wdTries = 0; }
+        boolean configuring = openedCount < 2;
+        long limit = configuring ? 7000 : 3000;                // 建会话比出帧慢，多给点时间
+        if (now - wdSince > limit && !recording && !clipping) {
+            wdSince = now;
+            wdTries++;
+            Log.w("LucidaDual", "画面停了 " + diag());
+            if (wdTries == 1) {
+                reqStage = 1; say("画面没有刷新，改用最简请求重试…");
+                restart();
+            } else if (wdTries == 2) {
+                reqStage = 2; say("还是没有画面，去掉帧率范围再试…");
+                restart();
+            } else {
+                wdRunning = false;
+                degrade("画面一直不动 " + diag());
+                return;
+            }
+        }
+        ui.postDelayed(new Runnable() { @Override public void run() { watchdogTick(); } }, 1000);
     }
 
     /** 状态变了：在相机线程上重新写入并重发重复请求 */
@@ -1068,7 +1186,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 CameraCaptureSession cs = ses[cam];
                 if (rb == null || cs == null) return;
                 fillReq(cam, rb);
-                cs.setRepeatingRequest(rb.build(), null, camH);
+                cs.setRepeatingRequest(rb.build(), capCallback(cam), camH);
             } catch (Throwable ignore) {}
         } });
     }
@@ -1087,12 +1205,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void onFrame(int cam) {
         if (gl == null || finished) return;
+        frameCnt[cam]++;
         boolean both = gl.update(cam);
         if (!both || cam != mainCam()) return;        // 以主画面那颗摄像头的帧率出画面 / 编码
         if (lastBackMain != state.backIsMain) { lastBackMain = state.backIsMain; ui.post(new Runnable() { @Override public void run() { syncDial(); } }); }
         // 帧率 > 35 时，没开「满帧画面运行录制」就只每隔一帧刷新一次屏幕（省电 / 少发热）；录制仍然每帧都编码
-        if (prefs.fullRate || camFps[cam] <= 35 || (++previewN & 1) == 0) gl.drawPreview();
+        if (prefs.fullRate || camFps[cam] <= 35 || (++previewN & 1) == 0) { gl.drawPreview(); drawnCnt++; }
         if (recording && recorder != null && gl.hasEncoder()) gl.drawEncoder(System.nanoTime() - recStartNs, recW, recH);
+        if (gl.hasLive()) gl.drawLive(recW & ~1, recH & ~1);          // 实况短片（可同时好几路）
     }
 
     // ---------------------------------------------------------------- 拍照 / 录像
@@ -1102,8 +1222,11 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void shutterTapped() {
-        if (!glReady || gl == null || clipping) return;
-        if (!videoMode) takePhoto(); else if (recording) stopRecording(); else startRecording(false, 0);
+        if (!glReady || gl == null) return;
+        if (!videoMode) takePhoto();
+        else if (recording) stopRecording();
+        else if (clipping) say("还有实况在拍 / 合成，等它们完成再录像");
+        else startRecording(false, 0);
     }
 
     private void takePhoto() {
@@ -1111,6 +1234,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         final boolean heif = prefs.heif && Build.VERSION.SDK_INT >= 34 && !live;
         final File f = newFile(heif ? "heic" : "jpg");
         final int w = recW, h = recH;
+        final LiveTask task;
+        if (live) {
+            if (activeLive() >= MAX_LIVE) { say("同时拍摄 / 合成的实况已满 " + MAX_LIVE + " 张，请稍等"); return; }
+            task = new LiveTask(++liveSeq, prefs.liveDur, f);
+            liveTasks.add(task); clipping = true; addLiveRow(task);
+        } else task = null;
         final View flash = new View(this); flash.setBackgroundColor(Color.WHITE);
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(stageW, stageH, Gravity.TOP | Gravity.LEFT); fp.leftMargin = stageX; fp.topMargin = stageY;
         root.addView(flash, fp); flash.animate().alpha(0f).setDuration(250).withEndAction(new Runnable() { @Override public void run() { root.removeView(flash); } }).start();
@@ -1122,63 +1251,113 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     else b.compress(Bitmap.CompressFormat.JPEG, 94, o);
                 }
                 b.recycle();
-                if (live) ui.post(new Runnable() { @Override public void run() { startClip(f); } });
-                else store(f, false);
-            } catch (Throwable t) { say("拍照失败：" + t.getMessage()); }
+                if (task != null) startLiveClip(task); else store(f, false, null);
+            } catch (Throwable t) {
+                say("拍照失败：" + t.getMessage());
+                if (task != null) ui.post(new Runnable() { @Override public void run() { liveEnded(task, false, "拍照失败"); } });
+            }
         } });
     }
 
-    /** 实况（动态照片）：按下快门后录 liveDur 秒短视频，完成后和照片合成一个文件（或分开保存） */
-    private void startClip(final File photo) {
-        clipping = true;
-        say("实况录制中…（" + prefs.liveDur + " 秒）");
-        liveStart(prefs.liveDur);
-        startRecording(true, prefs.liveDur);
-        final File clip = recFile;
-        ui.postDelayed(new Runnable() { @Override public void run() {
-            stopClip(photo, clip);
-        } }, prefs.liveDur * 1000L);
+    // ---------------------------------------------------------------- 实况（动态照片）连拍
+
+    private int activeLive() { int n = 0; for (LiveTask t : liveTasks) if (t.phase < 2) n++; return n; }
+
+    /** GL 线程：照片已经拍好，马上开这一张实况的短片编码（和别的实况同时进行，互不等待） */
+    private void startLiveClip(final LiveTask t) {
+        try {
+            File clip = newFile("mp4"); t.clip = clip;
+            DualRecorder r = new DualRecorder(clip, recW & ~1, recH & ~1, false, Math.max(24, Math.min(60, camFps[mainCam()])));
+            Surface in = r.start();
+            t.rec = r;
+            t.enc = gl.addLiveEncoder(in, System.nanoTime());
+            ui.post(new Runnable() { @Override public void run() {
+                t.t0Ns = System.nanoTime();
+                ui.postDelayed(new Runnable() { @Override public void run() { endLiveClip(t); } }, t.total * 1000L);
+            } });
+        } catch (Throwable e) {
+            // 短片开不起来：照片还是要保存
+            say("实况视频失败，只保存照片：" + e.getMessage());
+            store(t.photo, false, null);
+            ui.post(new Runnable() { @Override public void run() { liveEnded(t, false, "短片无法开始"); } });
+        }
     }
 
-    private void stopClip(final File photo, final File clip) {
-        final DualRecorder r = recorder;
-        recording = false; recorder = null;
+    /** 到时间了：收这一张的短片，和照片合成动态照片，存进系统相册 */
+    private void endLiveClip(final LiveTask t) {
+        t.phase = 1; refreshLiveRows();
         pending++;
         glH.post(new Runnable() { @Override public void run() {
-            try { gl.setEncoderSurface(null); } catch (Throwable ignore) {}
-            boolean ok = r != null && r.stop();
-            if (ok && !prefs.liveSeparate) {
-                File out = newFile("jpg");
-                if (MotionPhoto.embed(photo, clip, out, 0)) { photo.delete(); clip.delete(); store(out, false); }
-                else { say("动态照片合成失败，已分开保存"); store(photo, false); store(clip, true); }
-            } else if (ok) { store(photo, false); store(clip, true); }
-            else { say("实况视频失败，只保存照片"); store(photo, false); clip.delete(); }
-            clipping = false; pending--;
-            final boolean fine = ok;
-            ui.post(new Runnable() { @Override public void run() { liveDone(fine); if (pendingThrottle && !recording) throttleNow(); } });
+            try { gl.removeLiveEncoder(t.enc); } catch (Throwable ignore) {}
+            final boolean ok = t.rec != null && t.rec.stop();
+            new Thread(new Runnable() { @Override public void run() {
+                final Runnable fine = new Runnable() { @Override public void run() { ui.post(new Runnable() { @Override public void run() { liveEnded(t, true, "实况照片已存入系统相册"); } }); } };
+                if (ok && !prefs.liveSeparate) {
+                    File out = newFile("jpg");
+                    if (MotionPhoto.embed(t.photo, t.clip, out, 0)) { t.photo.delete(); t.clip.delete(); store(out, false, fine); }
+                    else { say("动态照片合成失败，已分开保存"); store(t.photo, false, null); store(t.clip, true, fine); }
+                } else if (ok) { store(t.photo, false, null); store(t.clip, true, fine); }
+                else {
+                    say("实况视频失败，只保存照片");
+                    store(t.photo, false, null);
+                    if (t.clip != null) t.clip.delete();
+                    ui.post(new Runnable() { @Override public void run() { liveEnded(t, false, "短片失败，已存静态照片"); } });
+                }
+                ui.post(new Runnable() { @Override public void run() { pending--; if (pendingThrottle && !recording && !clipping) throttleNow(); } });
+            } }).start();
         } });
     }
 
-    /** 实况计时（取景框左上角，受「实况计时显示」控制）：● 实况 1.2 / 3 秒 → 合成中 → 已拍完 */
-    private void liveStart(final int total) {
-        if (!prefs.liveTimer) return;
-        liveStartNs = System.nanoTime(); liveTotal = total; final int tok = ++liveToken;
-        liveTimerView.setBackground(DualUi.round(0xE6E61A1A, 13, this)); liveTimerView.setVisibility(View.VISIBLE);
-        liveTickRun = new Runnable() { @Override public void run() {
-            if (tok != liveToken) return;
-            float e = (System.nanoTime() - liveStartNs) / 1e9f;
-            liveTimerView.setText(e >= liveTotal ? "实况合成中…" : String.format(Locale.US, "● 实况  %.1f / %d 秒", e, liveTotal));
-            if (e < liveTotal) ui.postDelayed(this, 100);
-        } };
-        ui.post(liveTickRun);
+    private void addLiveRow(LiveTask t) {
+        TextView row = DualUi.label(this, "", 13, Color.WHITE); row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(4), dp(12), dp(4));
+        t.row = row;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2); lp.bottomMargin = dp(4);
+        liveStack.addView(row, lp);
+        liveHideToken++;                                       // 又来了新的一张，先别收
+        refreshLiveRows();
+        if (!liveTicking) {
+            liveTicking = true;
+            ui.postDelayed(new Runnable() { @Override public void run() {
+                refreshLiveRows();
+                boolean any = false; for (LiveTask x : liveTasks) if (x.phase == 0) any = true;
+                if (any) ui.postDelayed(this, 100); else liveTicking = false;
+            } }, 100);
+        }
     }
 
-    private void liveDone(boolean ok) {
-        if (!prefs.liveTimer || liveTimerView.getVisibility() != View.VISIBLE) return;
-        final int tok = ++liveToken;
-        liveTimerView.setBackground(DualUi.round(ok ? 0xEB1E9E4C : 0xEB808080, 13, this));
-        liveTimerView.setText(ok ? "✓ 实况已拍完" : "实况失败");
-        ui.postDelayed(new Runnable() { @Override public void run() { if (tok == liveToken) liveTimerView.setVisibility(View.GONE); } }, 1800);
+    private void refreshLiveRows() {
+        liveStack.setVisibility(prefs.liveTimer && !liveTasks.isEmpty() ? View.VISIBLE : View.GONE);
+        for (LiveTask t : liveTasks) {
+            if (t.row == null) continue;
+            int bg; String tx;
+            switch (t.phase) {
+                case 0: {
+                    float e = Math.min(t.total, (System.nanoTime() - t.t0Ns) / 1e9f);
+                    tx = String.format(Locale.US, "● 实况 #%d  录制 %.1f / %d 秒", t.n, e, t.total); bg = 0xE6E61A1A; break;
+                }
+                case 1: tx = "◐ 实况 #" + t.n + "  合成保存中…"; bg = 0xEBD98019; break;
+                case 2: tx = "✓ 实况 #" + t.n + "  已存入"; bg = 0xEB1E9E4C; break;
+                default: tx = "✕ 实况 #" + t.n + "  失败" + (t.note.isEmpty() ? "" : "：" + t.note); bg = 0xEB808080;
+            }
+            t.row.setText(tx); t.row.setBackground(DualUi.round(bg, 13, this));
+        }
+    }
+
+    /** 一张实况收尾（界面线程）。所有实况都完成了，进度条才一起收起来 */
+    private void liveEnded(LiveTask t, boolean ok, String msg) {
+        if (t.phase >= 2) return;
+        t.phase = ok ? 2 : 3; if (!ok) t.note = msg;
+        clipping = activeLive() > 0;
+        refreshLiveRows();
+        if (!prefs.liveTimer && ok) say(msg);
+        if (activeLive() > 0) return;
+        final int tok = ++liveHideToken;
+        ui.postDelayed(new Runnable() { @Override public void run() {
+            if (tok != liveHideToken || activeLive() > 0) return;
+            for (LiveTask x : liveTasks) if (x.row != null) liveStack.removeView(x.row);
+            liveTasks.clear(); liveStack.setVisibility(View.GONE);
+        } }, 1800);
     }
 
     private void startRecording(final boolean silent, int unused) {
@@ -1199,7 +1378,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     paint(); timer.setVisibility(View.VISIBLE); tick();
                     say(audio ? "开始录像（带声音）" : "开始录像（只录画面）");
                 } });
-            } catch (Throwable t) { recording = false; clipping = false; say("无法开始录像：" + t.getMessage()); }
+            } catch (Throwable t) { recording = false; say("无法开始录像：" + t.getMessage()); }
         } });
     }
 
@@ -1220,16 +1399,17 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         glH.post(new Runnable() { @Override public void run() {
             try { gl.setEncoderSurface(null); } catch (Throwable ignore) {}
             boolean ok = r != null && r.stop();
-            if (ok) store(f, true); else { say("录像失败：" + (r == null ? "" : r.error)); f.delete(); }
+            if (ok) store(f, true, null); else { say("录像失败：" + (r == null ? "" : r.error)); f.delete(); }
             pending--;
         } });
     }
 
-    /** 存进系统相册 + 记入清单（后台线程） */
-    private void store(final File f, final boolean video) {
+    /** 存进系统相册 + 记入清单 + 登记到双摄相册（后台线程）；done 在存完之后调用（可为 null） */
+    private void store(final File f, final boolean video, final Runnable done) {
         pending++;
         new Thread(new Runnable() { @Override public void run() {
             MediaSaver.Result r = MediaSaver.save(DualCameraActivity.this, f, f.getName(), video ? "video/mp4" : f.getName().endsWith(".heic") ? "image/heic" : "image/jpeg");
+            if (r.ok) DualLibrary.add(DualCameraActivity.this, r.uri);
             try {
                 JSONObject o = new JSONObject();
                 o.put("kind", video ? "video" : "photo");
@@ -1238,13 +1418,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 o.put("saved", r.ok);
                 synchronized (items) { items.put(o); itemFiles.add(f); itemVideo.add(video); }
             } catch (Exception ignore) {}
-            final int n; synchronized (items) { n = items.length(); }
-            say(r.ok ? (video ? "视频已存入系统相册" : "照片已存入系统相册") : "没存进系统相册：" + r.error + "（仍会导入澄影相册）");
-            final Bitmap tb = DualAlbum.thumb(f, video, 200);
-            ui.post(new Runnable() { @Override public void run() {
-                if (tb != null) thumbImg.setImageBitmap(tb);
-                thumbCount.setText(String.valueOf(n)); thumbCount.setVisibility(View.VISIBLE);
-            } });
+            if (done == null) say(r.ok ? (video ? "视频已存入系统相册" : "照片已存入系统相册") : "没存进系统相册：" + r.error + "（仍会导入澄影相册）");
+            else if (!r.ok) say("没存进系统相册：" + r.error + "（仍会导入澄影相册）");
+            refreshThumb();
+            if (done != null) done.run();
             pending--;
         } }).start();
     }

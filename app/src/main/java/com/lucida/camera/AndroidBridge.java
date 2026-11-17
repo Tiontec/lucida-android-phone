@@ -142,6 +142,13 @@ public class AndroidBridge {
         return "ok";
     }
 
+    /** 打开原生的 关于 / 版本更新 / 赞赏 页（name = about | ver | donate），或启动更新弹窗（name = update） */
+    @JavascriptInterface
+    public String openPage(final String name) {
+        act.runOnUiThread(new Runnable() { @Override public void run() { act.openNativePage(name); } });
+        return "ok";
+    }
+
     // ---------------------------------------------------------------- 原生双摄
 
     @JavascriptInterface

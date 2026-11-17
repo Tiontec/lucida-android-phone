@@ -416,10 +416,33 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ---------------------------------------------------------------- 原生展示页（B1a）
+
+    private View nativePage;
+
+    /** 网页调 LucidaAndroid.openPage(name)：关于 / 版本更新 / 赞赏 / 启动更新弹窗 */
+    void openNativePage(String name) {
+        if (nativePage != null || dualOpen) return;
+        View v = NativePages.create(this, name, new Runnable() { @Override public void run() { closeNativePage(); } });
+        if (v == null) return;
+        nativePage = v;
+        root.addView(v, new FrameLayout.LayoutParams(-1, -1));
+        v.requestApplyInsets();
+    }
+
+    private void closeNativePage() {
+        if (nativePage == null) return;
+        root.removeView(nativePage); nativePage = null;
+    }
+
     // ---------------------------------------------------------------- 返回键
 
     @Override
     public boolean onKeyDown(int k, KeyEvent e) {
+        if (k == KeyEvent.KEYCODE_BACK && nativePage != null) {
+            if (nativePage instanceof NativePages.Page && ((NativePages.Page) nativePage).closeModalIfOpen()) return true;
+            closeNativePage(); return true;
+        }
         if (k == KeyEvent.KEYCODE_BACK && web != null) {
             web.evaluateJavascript("(function(){try{return window.__lucidaBack?window.__lucidaBack():false}catch(e){return false}})()", new ValueCallback<String>() {
                 @Override public void onReceiveValue(String v) {

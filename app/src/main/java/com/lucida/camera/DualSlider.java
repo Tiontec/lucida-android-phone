@@ -11,6 +11,7 @@ import android.view.View;
 final class DualSlider extends View {
     interface Cb { void on(float v, boolean fromUser); }
     float min = 0f, max = 1f, value = 0f;
+    int fillColor = DualUi.YELLOW;        // 已填部分的颜色（调色盘里跟着当前底色变）
     private Cb cb;
     private boolean down;
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -55,7 +56,7 @@ final class DualSlider extends View {
         float ty = H / 2, th = dp(4);
         p.setStyle(Paint.Style.FILL);
         p.setColor(0x38FFFFFF); r.set(0, ty - th / 2, W, ty + th / 2); c.drawRoundRect(r, th / 2, th / 2, p);
-        p.setColor(DualUi.YELLOW); r.set(0, ty - th / 2, x + kw / 2, ty + th / 2); c.drawRoundRect(r, th / 2, th / 2, p);
+        p.setColor(fillColor); r.set(0, ty - th / 2, x + kw / 2, ty + th / 2); c.drawRoundRect(r, th / 2, th / 2, p);
         float s = down ? 1.08f : 1f;
         float kcx = x + kw / 2, hw = kw * s / 2, hh = kh * s / 2;
         r.set(kcx - hw, ty - hh, kcx + hw, ty + hh);

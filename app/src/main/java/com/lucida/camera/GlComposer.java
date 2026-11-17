@@ -180,6 +180,36 @@ final class GlComposer {
     }
     boolean hasEncoder() { return encSurf != EGL14.EGL_NO_SURFACE; }
 
+    /** 实况短片的编码输出（可以同时有好几路，连拍用）；只能在 GL 线程上增删 / 绘制 */
+    static final class Enc { EGLSurface surf = EGL14.EGL_NO_SURFACE; long baseNs; }
+    private final java.util.ArrayList<Enc> liveEncs = new java.util.ArrayList<Enc>();
+
+    Enc addLiveEncoder(Surface s, long baseNs) {
+        Enc e = new Enc();
+        e.surf = EGL14.eglCreateWindowSurface(dpy, cfg, s, new int[]{EGL14.EGL_NONE}, 0);
+        e.baseNs = baseNs;
+        liveEncs.add(e);
+        return e;
+    }
+    void removeLiveEncoder(Enc e) {
+        if (e == null) return;
+        liveEncs.remove(e);
+        if (e.surf != EGL14.EGL_NO_SURFACE) { EGL14.eglDestroySurface(dpy, e.surf); e.surf = EGL14.EGL_NO_SURFACE; }
+    }
+    boolean hasLive() { return !liveEncs.isEmpty(); }
+    void drawLive(int w, int h) {
+        if (liveEncs.isEmpty()) return;
+        long now = System.nanoTime();
+        for (int i = 0; i < liveEncs.size(); i++) {
+            Enc e = liveEncs.get(i);
+            EGL14.eglMakeCurrent(dpy, e.surf, e.surf, ctx);
+            drawScene(0, 0, w, h);
+            EGLExt.eglPresentationTimeANDROID(dpy, e.surf, now - e.baseNs);
+            EGL14.eglSwapBuffers(dpy, e.surf);
+        }
+        EGL14.eglMakeCurrent(dpy, winSurf, winSurf, ctx);
+    }
+
     /** 取走最新一帧；返回两路是否都已经有画面。 */
     boolean update(int cam) {
         try {
@@ -337,6 +367,8 @@ final class GlComposer {
             if (dpy != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(dpy, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
                 if (encSurf != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, encSurf);
+                for (Enc e : liveEncs) if (e.surf != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, e.surf);
+                liveEncs.clear();
                 if (winSurf != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, winSurf);
                 if (pbuf != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, pbuf);
                 EGL14.eglDestroyContext(dpy, ctx);
