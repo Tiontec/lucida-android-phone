@@ -3,11 +3,11 @@ android {
     namespace 'com.lucida.camera'
     compileSdk 34
     defaultConfig {
-        applicationId 'com.lucida.camera'
+        applicationId 'com.lucida.rebuild.android'
         minSdk 24
         targetSdk 34
-        versionCode 115000
-        versionName '11.5.0'
+        versionCode 10000
+        versionName '1.0.0'
     }
     buildFeatures { buildConfig true }
     signingConfigs {

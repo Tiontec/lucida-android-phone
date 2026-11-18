@@ -21,7 +21,9 @@ final class DualOrderView extends FrameLayout {
     private final ScrollView sv;
     private final int rowH;
 
-    DualOrderView(final Context c, DualPrefs prefs, Runnable onBack) {
+    DualOrderView(Context c, DualPrefs prefs, Runnable onBack) { this(c, prefs, "‹ 设置", onBack); }
+
+    DualOrderView(final Context c, DualPrefs prefs, String backText, Runnable onBack) {
         super(c);
         this.prefs = prefs; this.onBack = onBack;
         rowH = DualUi.dp(c, 52);
@@ -31,7 +33,7 @@ final class DualOrderView extends FrameLayout {
         addView(col, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout bar = new FrameLayout(c);
         col.addView(bar, new LinearLayout.LayoutParams(-1, DualUi.dp(c, 56)));
-        TextView back = DualUi.label(c, "‹ 设置", 16, DualUi.YELLOW);
+        TextView back = DualUi.label(c, backText, 16, DualUi.YELLOW);
         back.setPadding(DualUi.dp(c, 18), DualUi.dp(c, 10), DualUi.dp(c, 18), DualUi.dp(c, 10));
         back.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { DualOrderView.this.onBack.run(); } });
         bar.addView(back, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.LEFT));

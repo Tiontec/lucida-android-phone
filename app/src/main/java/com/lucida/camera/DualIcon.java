@@ -9,7 +9,7 @@ import android.view.View;
 
 /** 双摄界面的圆形图标按钮（全部用 Canvas 画，不依赖图片资源）。 */
 final class DualIcon extends View {
-    static final int BACK = 0, LIVE = 1, PALETTE = 2, GEAR = 3, PIP = 4, SPLIT = 5, SHAPE = 6, MIRROR = 7, TORCH = 8, SWAP = 9, PHOTO = 10, DOWN = 11, RESET = 12;
+    static final int BACK = 0, LIVE = 1, PALETTE = 2, GEAR = 3, PIP = 4, SPLIT = 5, SHAPE = 6, MIRROR = 7, TORCH = 8, SWAP = 9, PHOTO = 10, DOWN = 11, RESET = 12, MORE = 13;
     int kind;
     boolean on, round = true;
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG), bg = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -82,6 +82,15 @@ final class DualIcon extends View {
                             cx + (float) Math.cos(a) * u * 1.45f, cy + (float) Math.sin(a) * u * 1.45f, p);
                 }
                 c.drawCircle(cx, cy, u * 1.0f, p); break;
+            case MORE: {
+                float g = u * .62f, q = u * .5f;
+                p.setStyle(Paint.Style.FILL);
+                for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) {
+                    r.set(cx + (i == 0 ? -g - q : g - q), cy + (j == 0 ? -g - q : g - q), cx + (i == 0 ? -g + q : g + q), cy + (j == 0 ? -g + q : g + q));
+                    c.drawRoundRect(r, q * .35f, q * .35f, p);
+                }
+                p.setStyle(Paint.Style.STROKE); break;
+            }
             case PIP:
                 r.set(cx - u * 1.3f, cy - u * 1.3f, cx + u * 1.3f, cy + u * 1.3f); c.drawRoundRect(r, u * .4f, u * .4f, p);
                 r.set(cx + u * .1f, cy - u * .9f, cx + u * .9f, cy - u * .1f); p.setStyle(Paint.Style.FILL); c.drawRoundRect(r, u * .2f, u * .2f, p); break;

@@ -16,8 +16,8 @@ final class SharedData {
         {0.14f, -0.14f, -0.12f, 0f, 0.05f, 0f, 0f, 0.2f, 0f},
     };
     static final float[][] TEX_SHD = {{0f, 0f, 0f}, {0f, 0f, 0f}, {0f, 0f, 0f}, {-0.02f, 0.014f, 0.03f}};
-    static final String APP_VERSION = "11.5.0";
-    static final int APP_VERSION_CODE = 115000;
+    static final String APP_VERSION = "11.6.0";
+    static final int APP_VERSION_CODE = 116000;
     static final GradeState.Preset[] PRESETS = {
         new GradeState.Preset("standard", "标准", "底色", 0, 0, 100, new float[]{0.38f, 0.46f, 0.62f}, new float[]{1f, 1f, 1f}, 0f, 0f, 0f, null),
         new GradeState.Preset("pearl", "珠光", "底色", 18, 0, 100, new float[]{0.62f, 0.2f, 0.3f}, new float[]{1f, 0.66f, 0.76f}, 0.28f, 0.02f, 0f, null),

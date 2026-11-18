@@ -114,7 +114,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     // 界面
     private FrameLayout root, bottomBar, stageTouch;
     private ZoomBar zoomBar;
-    private DualIcon btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap;
+    private DualIcon btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore;
     private TextView specPill, tabPhoto, tabVideo, toast, timer, readout, presetLabel;
     private LinearLayout specPanel, segRes, segFps, segFmt;
     private View shutterInner, shutterRing, gridView, spinnerView;
@@ -167,7 +167,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         super.onCreate(b);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        MainActivity.useWholeScreen(this);
+        useWholeScreen(this);
         ui = new Handler(Looper.getMainLooper());
         prefs = new DualPrefs(this);
         gradeBack.load(prefs.sp, "g_"); gradeFront.load(prefs.sp, "gf_");
@@ -187,6 +187,16 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         syncDial();
         watchThermal();
         refreshThumb();
+    }
+
+    static void useWholeScreen(android.app.Activity a) {
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = a.getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode = Build.VERSION.SDK_INT >= 30
+                    ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                    : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            a.getWindow().setAttributes(lp);
+        }
     }
 
     @Override
@@ -310,6 +320,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         specPill.setPadding(dp(16), 0, dp(16), 0); specPill.setMinWidth(dp(120));
         stylePill();
         specPill.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { setSpecPanel(!specOpen); } });
+        btnBack.setVisibility(View.GONE);      // 重构版没有上一级，相机就是主界面
         root.addView(btnBack); root.addView(specPill); root.addView(btnLive); root.addView(btnPalette); root.addView(btnSettings);
         buildSpecPanel();
 
@@ -336,6 +347,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             prefs.mirror = !prefs.mirror; state.mirrorFront = prefs.mirror; prefs.save(); syncButtons(); } });
         btnTorch = icon(DualIcon.TORCH, new View.OnClickListener() { @Override public void onClick(View v) { torch(); } });
         btnSwap = icon(DualIcon.SWAP, new View.OnClickListener() { @Override public void onClick(View v) { swapMain(); } });
+        btnMore = icon(DualIcon.MORE, new View.OnClickListener() { @Override public void onClick(View v) { openMore(); } });
         tabPhoto = tab("照片", false); tabVideo = tab("视频", true);
         shutterRing = new View(this);
         android.graphics.drawable.GradientDrawable rg = new android.graphics.drawable.GradientDrawable();
@@ -355,7 +367,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         thumbBox.addView(thumbCount, new FrameLayout.LayoutParams(dp(22), dp(18), Gravity.BOTTOM | Gravity.RIGHT));
         thumbCount.setVisibility(View.GONE);
         thumbBox.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { openAlbum(); } });
-        for (View v : new View[]{btnLayout, btnShape, btnMirror, btnTorch, btnSwap, tabPhoto, tabVideo, shutterRing, shutterInner, thumbBox}) bottomBar.addView(v);
+        for (View v : new View[]{btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore, tabPhoto, tabVideo, shutterRing, shutterInner, thumbBox}) bottomBar.addView(v);
 
         palette = new DualPalette(this, gradeBack, gradeFront, prefs, new DualPalette.Host() {
             @Override public void onClose() { setPalette(false); }
@@ -489,6 +501,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         place(shutterInner, W / 2 - dp(30), cy - dp(30), dp(60), dp(60));
         place(thumbBox, dp(26), cy - dp(27), dp(54), dp(54));
         place(btnSwap, W - dp(26) - dp(46), cy - dp(23), dp(46), dp(46));
+        int moreMid = (W / 2 + dp(38) + W - dp(26) - dp(46)) / 2;      // 快门和翻转按钮之间
+        place(btnMore, moreMid - dp(23), cy - dp(23), dp(46), dp(46));
         applyOutputSize();
     }
     private static final int ViewGroup_WRAP = -2;
@@ -547,7 +561,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void stepPreset(int dir) {
         int[] ord = PresetOrder.indices(this);
         int pos = PresetOrder.posOf(ord, palette.shown().preset);
-        palette.selectPreset(ord[((pos + dir) % ord.length + ord.length) % ord.length]);
+        int np = pos + dir;
+        if (np < 0 || np >= ord.length) return;            // 首尾断开：到头了不再循环
+        palette.selectPreset(ord[np]);
     }
 
     private void setPalette(boolean on) {
@@ -589,12 +605,21 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         overlay = v; root.addView(v, new FrameLayout.LayoutParams(-1, -1));
     }
 
+    private void openMore() {
+        setSpecPanel(false);
+        if (overlay != null) return;
+        final DualFunctionsView v = new DualFunctionsView(this, prefs, new Runnable() { @Override public void run() { closeOverlay(); } },
+                new Runnable() { @Override public void run() { closeOverlay(); openSettings(); } });
+        overlay = v; root.addView(v, new FrameLayout.LayoutParams(-1, -1));
+        v.requestApplyInsets();
+    }
+
     private void openAlbum() {
         if (overlay != null) return;
         final DualAlbum a = new DualAlbum(this, new DualAlbum.Host() {
                 @Override public void requestDelete(java.util.List<Uri> uris, Runnable done) { askDelete(uris, done); } },
                 new Runnable() { @Override public void run() { closeOverlay(); refreshThumb(); } },
-                new Runnable() { @Override public void run() { closeOverlay(); closeTapped(); } });
+                new Runnable() { @Override public void run() { closeOverlay(); } });
         overlay = a; root.addView(a, new FrameLayout.LayoutParams(-1, -1));
     }
 
@@ -660,17 +685,20 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void applyGlass() {
         lastGlass = prefs.glass; DualUi.glass = prefs.glass;
         stylePill(); styleToast();
-        DualIcon[] ics = {btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap};
+        DualIcon[] ics = {btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore};
         for (DualIcon i : ics) if (i != null) i.invalidate();
         root.removeView(specPanel); buildSpecPanel(); relayout();
         palette.restyle();
     }
 
     /** 规格面板展开 / 收起：毛玻璃开着时是果冻（Q 弹）动画，关着时直接出现 / 消失 */
+    private android.animation.ValueAnimator specAx, specAy;
     private void setSpecPanel(final boolean open) {
         if (open == specOpen && (specPanel.getVisibility() == View.VISIBLE) == open) return;
         specOpen = open;
         specPanel.animate().cancel();
+        if (specAx != null) { specAx.cancel(); specAx = null; }      // 展开动画没跑完就收起 / 再展开：旧的缩放动画必须停掉，否则它会继续改缩放，面板卡在半途
+        if (specAy != null) { specAy.cancel(); specAy = null; }
         if (!DualUi.glass) { specPanel.setScaleX(1f); specPanel.setScaleY(1f); specPanel.setAlpha(1f); specPanel.setVisibility(open ? View.VISIBLE : View.GONE); return; }
         // 缩放支点 = 「帧率画质」胶囊下沿的中点：弹出从它下面冒出来，收起也缩回到它下面（不盖住它）
         specPanel.setPivotX(specPill.getX() + specPill.getWidth() / 2f - specPanel.getX());
@@ -684,6 +712,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             ay.setDuration(560); ay.setStartDelay(40); ay.setInterpolator(new OvershootInterpolator(3.2f));
             ax.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleX((Float) a.getAnimatedValue()); } });
             ay.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator a) { specPanel.setScaleY((Float) a.getAnimatedValue()); } });
+            specAx = ax; specAy = ay;
             ax.start(); ay.start();
         } else {
             specPanel.animate().scaleX(.1f).scaleY(.1f).alpha(0f).setDuration(260).setInterpolator(new AccelerateInterpolator(1.4f))
@@ -1157,7 +1186,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         long now = System.currentTimeMillis(), dr = drawnCnt;
         if (dr != wdLastDrawn) { wdLastDrawn = dr; wdSince = now; wdTries = 0; }
         boolean configuring = openedCount < 2;
-        long limit = configuring ? 7000 : 3000;                // 建会话比出帧慢，多给点时间
+        boolean zeroCam = frameCnt[0] == 0 || frameCnt[1] == 0;   // 有一颗摄像头从没出过一帧
+        long limit = configuring ? (zeroCam ? 5000 : 7000) : 3000;   // 建会话比出帧慢，多给点时间
         if (now - wdSince > limit && !recording && !clipping) {
             wdSince = now;
             wdTries++;
@@ -1170,6 +1200,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 restart();
             } else {
                 wdRunning = false;
+                if (zeroCam) {          // 降档也没用：这颗摄像头从来没出过画面，是系统 / 硬件不允许前后同时工作
+                    fail("unsupported", "这台手机的前后摄像头不能同时出画面（" + (frameCnt[0] == 0 ? "后置" : "前置") + "一帧都没有）。" + diag());
+                    return;
+                }
                 degrade("画面一直不动 " + diag());
                 return;
             }
@@ -1414,7 +1448,6 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 JSONObject o = new JSONObject();
                 o.put("kind", video ? "video" : "photo");
                 o.put("name", f.getName());
-                o.put("url", "https://" + MainActivity.HOST + "/__dual/" + java.net.URLEncoder.encode(f.getName(), "UTF-8").replace("+", "%20"));
                 o.put("saved", r.ok);
                 synchronized (items) { items.put(o); itemFiles.add(f); itemVideo.add(video); }
             } catch (Exception ignore) {}
@@ -1448,7 +1481,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (failedReported) return;
         failedReported = true;
         failCode = code; failMsg = msg;
-        ui.post(new Runnable() { @Override public void run() { finishWhenIdle(); } });
+        final String title = "denied".equals(code) ? "没有相机权限" : "无法打开相机";
+        final String body = "denied".equals(code) ? "请到 系统设置 → 应用 → 澄影重构版 → 权限 里打开相机。" : msg;
+        ui.post(new Runnable() { @Override public void run() {
+            if (isFinishing()) return;
+            try { spinnerView.setVisibility(View.GONE); } catch (Throwable ignore) {}
+            new android.app.AlertDialog.Builder(DualCameraActivity.this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(title).setMessage(body).setPositiveButton("好", null).show();
+        } });
     }
 
     private void finishWith() {

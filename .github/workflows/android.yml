@@ -1,4 +1,4 @@
-name: 澄影 安卓手机版自动打包
+name: 澄影重构版 安卓自动打包
 on:
   push: { branches: [main, master], paths-ignore: ['**.md'] }
   workflow_dispatch:
@@ -15,5 +15,5 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Lucida-Android-apk
+          name: LucidaRebuild-Android-apk
           path: app/build/outputs/apk/debug/*.apk

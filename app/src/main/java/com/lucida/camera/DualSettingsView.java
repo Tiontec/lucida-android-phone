@@ -77,7 +77,7 @@ final class DualSettingsView extends FrameLayout {
         add(list, note(c, "说明：多摄同时工作时系统不提供 RAW；动态照片没有声音。"));
     }
 
-    private static View linkRow(Context c, String title, String sub, final Runnable go) {
+    static View linkRow(Context c, String title, String sub, final Runnable go) {
         LinearLayout row = new LinearLayout(c);
         row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
         row.setBackground(DualUi.surface(0x14FFFFFF, 14, c)); row.setPadding(DualUi.dp(c, 14), DualUi.dp(c, 12), DualUi.dp(c, 14), DualUi.dp(c, 12));
