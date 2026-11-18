@@ -14,12 +14,21 @@ import android.widget.TextView;
  * 1.0.0：更多设置 / 调色盘预设顺序 / 关于。
  */
 final class DualFunctionsView extends FrameLayout {
+    interface Host { boolean isDual(); String lastFail(); void setDual(boolean on); }
+
     private final DualPrefs prefs;
     private final Runnable onClose, onSettings;
+    private final Host host;
+    private LinearLayout list;
+    private boolean shownDual; private String shownFail = "";
+    private final Runnable poll = new Runnable() { @Override public void run() {
+        if (host.isDual() != shownDual || !host.lastFail().equals(shownFail)) fill();
+        postDelayed(poll, 500);
+    } };
 
-    DualFunctionsView(final Context c, DualPrefs prefs, Runnable onClose, Runnable onSettings) {
+    DualFunctionsView(final Context c, DualPrefs prefs, Runnable onClose, Runnable onSettings, Host host) {
         super(c);
-        this.prefs = prefs; this.onClose = onClose; this.onSettings = onSettings;
+        this.prefs = prefs; this.onClose = onClose; this.onSettings = onSettings; this.host = host;
         setBackgroundColor(DualUi.glass ? 0xCC101010 : 0xF2101010); setClickable(true);
         LinearLayout col = new LinearLayout(c); col.setOrientation(LinearLayout.VERTICAL);
         addView(col, new FrameLayout.LayoutParams(-1, -1));
@@ -32,14 +41,28 @@ final class DualFunctionsView extends FrameLayout {
         bar.addView(done, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
         ScrollView sv = new ScrollView(c);
         col.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1f));
-        LinearLayout list = new LinearLayout(c); list.setOrientation(LinearLayout.VERTICAL);
+        list = new LinearLayout(c); list.setOrientation(LinearLayout.VERTICAL);
         int pad = DualUi.dp(c, 16);
         list.setPadding(pad, DualUi.dp(c, 6), pad, DualUi.dp(c, 40));
         sv.addView(list, new FrameLayout.LayoutParams(-1, -2));
+        fill();
+    }
+
+    private void fill() {
+        final Context c = getContext();
+        list.removeAllViews();
+        shownDual = host.isDual(); shownFail = host.lastFail();
+        add(list, DualUi.toggleRow(c, "双摄", "前后摄像头同时拍摄（画中画 / 上下分屏）。默认关闭；这台手机不能同时开两颗摄像头时会自动退回单摄并提示。", shownDual, new DualUi.BoolCb() {
+            @Override public void on(boolean v) { host.setDual(v); } }));
+        if (shownFail.length() > 0) {
+            TextView f = DualUi.label(c, "上次双摄不可用的原因：" + shownFail, 11, 0xB3FFB020);
+            f.setPadding(DualUi.dp(c, 4), DualUi.dp(c, 6), DualUi.dp(c, 4), 0); f.setTextIsSelectable(true);
+            add(list, f);
+        }
         add(list, DualSettingsView.linkRow(c, "更多设置", "实况、片门、小窗边框、镜像、录像声音、毛玻璃…", new Runnable() { @Override public void run() { DualFunctionsView.this.onSettings.run(); } }));
         add(list, DualSettingsView.linkRow(c, "调色盘预设顺序", "拖动调整预设的先后，「标准」固定在第一位", new Runnable() { @Override public void run() {
             final DualOrderView[] ov = new DualOrderView[1];
-            ov[0] = new DualOrderView(getContext(), DualFunctionsView.this.prefs, new Runnable() { @Override public void run() { removeView(ov[0]); } });
+            ov[0] = new DualOrderView(getContext(), prefs, new Runnable() { @Override public void run() { removeView(ov[0]); } });
             addView(ov[0], new FrameLayout.LayoutParams(-1, -1));
         } }));
         LinearLayout about = new LinearLayout(c); about.setOrientation(LinearLayout.VERTICAL);
@@ -48,6 +71,9 @@ final class DualFunctionsView extends FrameLayout {
         about.addView(DualUi.label(c, "澄影重构版 " + BuildConfig.VERSION_NAME, 12, 0x80FFFFFF));
         add(list, about);
     }
+
+    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); postDelayed(poll, 500); }
+    @Override protected void onDetachedFromWindow() { removeCallbacks(poll); super.onDetachedFromWindow(); }
 
     private static void add(LinearLayout l, View v) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.topMargin = DualUi.dp(l.getContext(), 12);

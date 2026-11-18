@@ -29,6 +29,7 @@ final class DualPalette extends LinearLayout {
     private final FrameLayout body;
     private LinearLayout targetSeg, tabSeg;
     private int tab = 0;
+    private boolean singleMode;
     private Pad pad;
 
     DualPalette(final Context c, GradeState back, GradeState front, DualPrefs prefs, Host h) {
@@ -50,6 +51,13 @@ final class DualPalette extends LinearLayout {
         rebuild();
     }
 
+    /** 单摄时不分「后置 / 前置 / 同时」：直接调当前这颗摄像头的画面 */
+    void setSingle(boolean single, boolean front) {
+        singleMode = single;
+        prefs.gradeTarget = single ? (front ? 1 : 0) : 2;
+        targetSeg.setVisibility(single ? View.INVISIBLE : View.VISIBLE);
+    }
+
     /** 玻璃开关变了：重画底板和里面所有控件 */
     void restyle() {
         Context c = getContext();
@@ -62,7 +70,7 @@ final class DualPalette extends LinearLayout {
         LinearLayout nt = DualUi.seg(c, new String[]{"后置", "前置", "同时"}, prefs.gradeTarget, new DualUi.IntCb() {
             @Override public void on(int i) { prefs.gradeTarget = i; prefs.save(); rebuild(); host.onChange(); } });
         LinearLayout nb = DualUi.seg(c, new String[]{"调色板", "质感", "颗粒"}, tsel, new DualUi.IntCb() { @Override public void on(int i) { tab = i; rebuild(); } });
-        swapSeg(targetSeg, nt); targetSeg = nt;
+        swapSeg(targetSeg, nt); targetSeg = nt; targetSeg.setVisibility(singleMode ? View.INVISIBLE : View.VISIBLE);
         swapSeg(tabSeg, nb); tabSeg = nb;
     }
 

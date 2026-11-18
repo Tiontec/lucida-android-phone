@@ -51,6 +51,8 @@ final class GlComposer {
     int winW = 1, winH = 1;
     private int fbo, fboTex, fboW, fboH;
     private final boolean[] hasFrame = new boolean[2];
+    /** 单摄：只画主画面这一路（整个取景框），update 只要主画面那颗摄像头有画面就算就绪 */
+    volatile boolean single = false;
 
     GlComposer(DualState s) { state = s; }
 
@@ -218,6 +220,7 @@ final class GlComposer {
             st[cam].getTransformMatrix(texMat[cam]);
             hasFrame[cam] = true;
         } catch (Exception ignore) {}
+        if (single) return hasFrame[state.backIsMain ? BACK : FRONT];
         return hasFrame[0] && hasFrame[1];
     }
 
@@ -288,6 +291,7 @@ final class GlComposer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         int mainCam = state.backIsMain ? BACK : FRONT, secCam = state.backIsMain ? FRONT : BACK;
+        if (single) { drawCam(mainCam, new float[]{0, 0, 1, 1}, W, H, false); return; }
         drawCam(mainCam, state.rect(0, W, H), W, H, false);
         drawCam(secCam, state.rect(1, W, H), W, H, state.style == DualState.STYLE_PIP);
     }

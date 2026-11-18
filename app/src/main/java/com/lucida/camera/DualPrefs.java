@@ -23,6 +23,8 @@ final class DualPrefs {
     boolean glass = false;     // 毛玻璃界面（半透明 + 高光描边；不是系统液态玻璃）
     int gradeTarget = 2;       // 调色板正在改谁：0 后置 / 1 前置 / 2 同时
     float pipW = 0.32f;        // 小窗宽度占比（双击放大 / 缩小）
+    boolean dualOn = false;    // 双摄开关（默认关 = 单摄；开 = 前后摄像头同时工作，设备不行就自动退回单摄）
+    boolean singleFront = false; // 单摄时用前置摄像头
     boolean fullRate = false;  // 满帧画面运行录制：开 = 发热也不降帧；关 = 过热时自动降到 30 帧
 
     DualPrefs(Context c) {
@@ -45,6 +47,8 @@ final class DualPrefs {
         gradeTarget = Math.max(0, Math.min(2, sp.getInt("gradeTarget", 2)));
         pipW = Math.max(0.2f, Math.min(0.6f, sp.getFloat("pipW", 0.32f)));
         fullRate = sp.getBoolean("fullRate", false);
+        dualOn = sp.getBoolean("dualOn", false);
+        singleFront = sp.getBoolean("singleFront", false);
     }
 
     private static int pick(int v, int a, int b, int c) { return v == a || v == b || v == c ? v : b; }
@@ -54,6 +58,6 @@ final class DualPrefs {
                 .putBoolean("mirror", mirror).putBoolean("audio", audio).putInt("style", style).putBoolean("grid", gridLines)
                 .putBoolean("live", live).putInt("liveDur", liveDur).putBoolean("liveSep", liveSeparate).putBoolean("heif", heif).putInt("pipShape", pipShape)
                 .putBoolean("liveTimer", liveTimer).putBoolean("glass", glass).putInt("gradeTarget", gradeTarget).putFloat("pipW", pipW)
-                .putBoolean("fullRate", fullRate).apply();
+                .putBoolean("fullRate", fullRate).putBoolean("dualOn", dualOn).putBoolean("singleFront", singleFront).apply();
     }
 }

@@ -83,6 +83,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private String backId, frontId;
     private volatile boolean glReady, camsOpened, finished, recording, videoMode, torchOn, failedReported, clipping;
     private int gen = 0, openedCount = 0, degradeCount = 0;
+    /** 双摄开关：true = 前后摄像头同时工作；false = 单摄（只开 state.backIsMain 指的那一颗） */
+    private volatile boolean dual;
+    private volatile String lastDualFail = "";
     private DualRecorder recorder;
     private long recStartNs;
     private int recW = 720, recH = 1280;
@@ -174,11 +177,16 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         DualUi.glass = prefs.glass;
         state.style = prefs.style; state.mirrorFront = prefs.mirror; state.pipW = prefs.pipW;
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
+        dual = prefs.dualOn;
+        state.backIsMain = dual ? true : !prefs.singleFront;
         effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
         buildUi();
         immersive();
         cm = (CameraManager) getSystemService(CAMERA_SERVICE);
-        if (!pickCameras()) { fail("unsupported", "没有找到前置和后置摄像头"); return; }
+        if (!pickCameras()) { fail("unsupported", "没有找到摄像头"); return; }
+        if (dual && (backId == null || frontId == null)) { dual = false; prefs.dualOn = false; prefs.save(); state.backIsMain = !prefs.singleFront; }
+        if (backId == null) state.backIsMain = false;          // 只有前置：单摄就用前置
+        if (frontId == null) state.backIsMain = true;
         glThread = new HandlerThread("dual-gl"); glThread.start(); glH = new Handler(glThread.getLooper());
         camThread = new HandlerThread("dual-cam"); camThread.start(); camH = new Handler(camThread.getLooper());
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -526,6 +534,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         btnLayout.setKind(state.style == DualState.STYLE_PIP ? DualIcon.PIP : DualIcon.SPLIT);
         boolean pip = state.style == DualState.STYLE_PIP;
         btnShape.setEnabled(pip); btnShape.setAlpha(pip ? 1f : .4f); btnShape.shapeStyle = prefs.pipShape; btnShape.invalidate();
+        // 单摄时没有布局 / 小窗形状可调；前置单摄没有手电筒
+        btnLayout.setVisibility(dual ? View.VISIBLE : View.INVISIBLE); btnShape.setVisibility(dual ? View.VISIBLE : View.INVISIBLE);
+        boolean noTorch = !dual && !state.backIsMain;
+        btnTorch.setEnabled(!noTorch); btnTorch.setAlpha(noTorch ? .4f : 1f);
     }
 
     private void syncSpecPill() {
@@ -575,7 +587,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         presetLabel.setVisibility(on ? View.VISIBLE : View.GONE);
         dots.setVisibility(on ? View.VISIBLE : View.GONE);
         setSpecPanel(false);
-        if (on) { clearFocus(); palette.sync(); }
+        if (on) { clearFocus(); palette.setSingle(!dual, !state.backIsMain); palette.sync(); }
         pushGrade();
     }
 
@@ -609,7 +621,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         setSpecPanel(false);
         if (overlay != null) return;
         final DualFunctionsView v = new DualFunctionsView(this, prefs, new Runnable() { @Override public void run() { closeOverlay(); } },
-                new Runnable() { @Override public void run() { closeOverlay(); openSettings(); } });
+                new Runnable() { @Override public void run() { closeOverlay(); openSettings(); } },
+                new DualFunctionsView.Host() {
+                    @Override public boolean isDual() { return dual; }
+                    @Override public String lastFail() { return lastDualFail; }
+                    @Override public void setDual(boolean on) { setDualMode(on); }
+                });
         overlay = v; root.addView(v, new FrameLayout.LayoutParams(-1, -1));
         v.requestApplyInsets();
     }
@@ -724,13 +741,25 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     // ---------------------------------------------------------------- 手势：对焦 / 曝光 / 小窗
 
     private boolean inPip(float x, float y) {
-        if (paletteOpen || state.style != DualState.STYLE_PIP || stageW <= 1) return false;
+        if (!dual || paletteOpen || state.style != DualState.STYLE_PIP || stageW <= 1) return false;
         float W = stageW, H = stageH;
         float[] r = state.rect(1, W, H);
         return x >= r[0] * W && x <= (r[0] + r[2]) * W && y >= r[1] * H && y <= (r[1] + r[3]) * H;
     }
 
-    private void swapMain() { clearFocus(); state.backIsMain = !state.backIsMain; syncDial(); }
+    private void swapMain() {
+        clearFocus();
+        if (!dual) {
+            // 单摄：翻转 = 前后摄像头切换（要重开摄像头）
+            if (recording || clipping) { say("录像 / 实况拍摄中不能切换摄像头"); return; }
+            if ((state.backIsMain ? frontId : backId) == null) { say("这台手机没有另一颗摄像头"); return; }
+            state.backIsMain = !state.backIsMain; prefs.singleFront = !state.backIsMain; prefs.save();
+            if (torchOn) { torchOn = false; try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {} }
+            syncDial(); syncButtons(); restart();
+            return;
+        }
+        state.backIsMain = !state.backIsMain; syncDial();
+    }
 
     private void togglePipSize() {
         final float from = state.pipW, to = from < .45f ? .55f : .32f;
@@ -907,8 +936,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 if (f == CameraCharacteristics.LENS_FACING_FRONT && frontId == null) frontId = id;
             }
         } catch (Exception e) { return false; }
-        if (backId == null || frontId == null) return false;
+        if (backId == null && frontId == null) return false;
         for (int cam = 0; cam < 2; cam++) {
+            if ((cam == 0 ? backId : frontId) == null) continue;
             try {
                 CameraCharacteristics c = cm.getCameraCharacteristics(cam == 0 ? backId : frontId);
                 activeArr[cam] = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
@@ -938,6 +968,40 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private int mainCam() { return state.backIsMain ? 0 : 1; }
+
+    /** 这次要开的摄像头：双摄 = 前后都开；单摄 = 只开主画面那一颗 */
+    private int[] usedCams() { return dual ? new int[]{0, 1} : new int[]{mainCam()}; }
+    private int needCount() { return dual ? 2 : 1; }
+    private boolean zeroCam() { return dual ? (frameCnt[0] == 0 || frameCnt[1] == 0) : frameCnt[mainCam()] == 0; }
+
+    /** 这台设备跑不了所选的摄像头配置：双摄 → 自动退回单摄并提示；单摄 → 报错 */
+    private void unsupported(final String msg) {
+        if (!dual) { fail("unsupported", msg); return; }
+        dual = false; prefs.dualOn = false; prefs.save();
+        state.backIsMain = !prefs.singleFront;
+        lastDualFail = msg;
+        final String shortMsg = msg.indexOf("［诊断］") > 0 ? msg.substring(0, msg.indexOf("［诊断］")) : msg;
+        ui.post(new Runnable() { @Override public void run() {
+            degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
+            if (gl != null) gl.single = true;
+            syncButtons(); syncDial(); restart();
+            say("双摄不可使用，已退回单摄：" + shortMsg + "（详细原因在「功能」面板里）");
+        } });
+    }
+
+    /** 功能面板里的双摄开关（界面线程） */
+    private void setDualMode(boolean on) {
+        if (on == dual) return;
+        if (recording || clipping) { say("录像 / 实况拍摄中不能切换"); return; }
+        dual = on; prefs.dualOn = on; prefs.save(); lastDualFail = "";
+        state.backIsMain = on ? true : !prefs.singleFront;
+        if (gl != null) gl.single = !on;
+        if (torchOn) { torchOn = false; try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {} }
+        degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
+        clearFocusAll();
+        syncButtons(); syncDial(); restart();
+        say(on ? "正在开启双摄…（这台手机不支持时会自动退回单摄）" : "已切换到单摄");
+    }
 
     private void syncDial() {
         if (zoomBar == null) return;
@@ -978,9 +1042,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void applyOutputSize() {
         float asp = prefs.fullGate ? 0.75f : Math.min(1f, Math.max(0.4f, stageW / (float) Math.max(1, stageH)));
         int tierLong = prefs.res >= 2160 ? (prefs.fullGate ? 2880 : 3840) : prefs.res >= 1080 ? 1920 : 1280;
-        int streamLong = Math.max(streamW[0], streamH[0]);
+        int rc = dual ? 0 : mainCam();
+        int streamLong = Math.max(streamW[rc], streamH[rc]);
         int lg = Math.min(tierLong, Math.max(480, streamLong));
-        if (asp > 0.5625f && !prefs.fullGate) lg = Math.min(lg, Math.max(480, Math.round(Math.min(streamW[0], streamH[0]) / asp)));
+        if (asp > 0.5625f && !prefs.fullGate) lg = Math.min(lg, Math.max(480, Math.round(Math.min(streamW[rc], streamH[rc]) / asp)));
         recH = lg & ~1; recW = Math.round(lg * asp) & ~1;
     }
 
@@ -1008,11 +1073,11 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void degrade(String why) {
         if (finished || failedReported) return;
         degradeCount++;
-        if (degradeCount > 6) { fail("unsupported", "这台设备配置不出前后摄像头同时输出（" + why + "）"); return; }
+        if (degradeCount > 6) { unsupported(dual ? "这台设备配置不出前后摄像头同时输出（" + why + "）" : "这颗摄像头配置不出可用的规格（" + why + "）"); return; }
         if (effFps > 30) effFps = 30;
         else if (effTier < 3) effTier++;
-        else { fail("unsupported", "这台设备配置不出前后摄像头同时输出（" + why + "）"); return; }
-        say("同时开前后摄像头时硬件撑不住所选规格，已自动降档");
+        else { unsupported(dual ? "这台设备配置不出前后摄像头同时输出（" + why + "）" : "这颗摄像头配置不出可用的规格（" + why + "）"); return; }
+        say(dual ? "同时开前后摄像头时硬件撑不住所选规格，已自动降档" : "摄像头撑不住所选规格，已自动降档");
         restart();
     }
 
@@ -1025,10 +1090,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 gl.dispDeg = 0;
                 gl.vfX = stageX; gl.vfY = stageY; gl.vfW = stageW; gl.vfH = stageH;
                 gl.borderMode = prefs.pipBorder;
+                gl.single = !dual;
                 for (int cam = 0; cam < 2; cam++) {
-                    CameraCharacteristics c = cm.getCameraCharacteristics(cam == 0 ? backId : frontId);
-                    Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                    gl.sensor[cam] = so == null ? 90 : so;
+                    String cid = cam == 0 ? backId : frontId;
+                    CameraCharacteristics c = cid == null ? null : cm.getCameraCharacteristics(cid);
+                    Integer so = c == null ? null : c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+                    gl.sensor[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
                     final int which = cam;
                     gl.st[cam].setOnFrameAvailableListener(new SurfaceTexture.OnFrameAvailableListener() {
                         @Override public void onFrameAvailable(SurfaceTexture t) { onFrame(which); }
@@ -1051,15 +1118,19 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         frameCnt[0] = frameCnt[1] = capCnt[0] = capCnt[1] = capFail[0] = capFail[1] = 0;
         wdLastDrawn = drawnCnt; wdSince = System.currentTimeMillis();
         startWatchdog();
-        int[][] pl = {plan(0), plan(1)};
-        for (int cam = 0; cam < 2; cam++) {
+        gl.single = !dual;
+        final int[] used = usedCams();
+        int[][] pl = new int[2][];
+        for (int cam : used) {
+            pl[cam] = plan(cam);
             streamW[cam] = pl[cam][0]; streamH[cam] = pl[cam][1]; camFps[cam] = pl[cam][2];
             fpsRange[cam][0] = pl[cam][3]; fpsRange[cam][1] = pl[cam][4];
             gl.setBufferSize(cam, pl[cam][0], pl[cam][1]);
         }
-        infoText = "后置 " + pl[0][0] + "×" + pl[0][1] + "@" + pl[0][2] + "  前置 " + pl[1][0] + "×" + pl[1][1] + "@" + pl[1][2];
+        if (dual) infoText = "后置 " + pl[0][0] + "×" + pl[0][1] + "@" + pl[0][2] + "  前置 " + pl[1][0] + "×" + pl[1][1] + "@" + pl[1][2];
+        else { int c0 = used[0]; infoText = (c0 == 0 ? "后置 " : "前置 ") + pl[c0][0] + "×" + pl[c0][1] + "@" + pl[c0][2]; }
         applyOutputSize();
-        for (int cam = 0; cam < 2; cam++) {
+        for (int cam : used) {
             final int which = cam;
             try {
                 cm.openCamera(cam == 0 ? backId : frontId, new CameraDevice.StateCallback() {
@@ -1073,17 +1144,18 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         dev[which] = null;
                         if (finished) return;
                         // 还没出画面就被系统断开 = 这台手机不让前后摄像头同时开（后开的把先开的顶掉）；已经在出画面才断开 = 被别的应用占用
-                        if (frameCnt[0] == 0 || frameCnt[1] == 0) fail("unsupported", "系统在开前后摄像头时断开了" + (which == 0 ? "后置" : "前置") + "摄像头（这台手机不允许同时开前后摄像头）。" + diag());
+                        if (zeroCam()) { if (dual) unsupported("系统在开前后摄像头时断开了" + (which == 0 ? "后置" : "前置") + "摄像头（这台手机不允许同时开前后摄像头）。" + diag()); else fail("error", "摄像头被系统断开。" + diag()); }
                         else say("摄像头被占用或断开");
                     }
                     @Override public void onError(CameraDevice d, int err) {
                         d.close(); if (myGen != gen) return; dev[which] = null;
                         boolean busy = err == CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE || err == CameraDevice.StateCallback.ERROR_CAMERA_IN_USE;
-                        fail(busy ? "unsupported" : "error", (busy ? "系统不允许前后摄像头同时工作（硬件限制）" : "摄像头出错（代码 " + err + "）") + "。" + diag());
+                        String em = (busy ? (dual ? "系统不允许前后摄像头同时工作（硬件限制）" : "摄像头正被别的应用占用") : "摄像头出错（代码 " + err + "）") + "。" + diag();
+                        if (busy) unsupported(em); else fail("error", em);
                     }
                 }, camH);
             } catch (Exception e) {
-                fail(e instanceof CameraAccessException ? "unsupported" : "error", "打开摄像头失败：" + e.getMessage());
+                if (e instanceof CameraAccessException) unsupported("打开摄像头失败：" + e.getMessage()); else fail("error", "打开摄像头失败：" + e.getMessage());
                 return;
             }
         }
@@ -1107,7 +1179,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         cs.setRepeatingRequest(rb.build(), capCallback(cam), camH);
                     } catch (Exception e) { fail("error", "开启预览失败：" + e.getMessage() + "。" + diag()); return; }
                     synchronized (DualCameraActivity.this) { openedCount++; }
-                    if (openedCount >= 2) ui.post(new Runnable() { @Override public void run() {
+                    if (openedCount >= needCount()) ui.post(new Runnable() { @Override public void run() {
                         spinnerView.setVisibility(View.GONE);
                         String want = (prefs.res == 2160 ? "4K" : prefs.res + "p") + "@" + prefs.fps;
                         say((camFps[0] < prefs.fps || effFps < prefs.fps || effTier > DualPlan.startTier(prefs.res) ? "实际规格低于所选（" + want + "）：" : "实际规格：") + infoText);
@@ -1185,8 +1257,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (!camsOpened) { wdRunning = false; return; }        // 摄像头已经关了（暂停 / 重启中）；下次 tryOpen 再起
         long now = System.currentTimeMillis(), dr = drawnCnt;
         if (dr != wdLastDrawn) { wdLastDrawn = dr; wdSince = now; wdTries = 0; }
-        boolean configuring = openedCount < 2;
-        boolean zeroCam = frameCnt[0] == 0 || frameCnt[1] == 0;   // 有一颗摄像头从没出过一帧
+        boolean configuring = openedCount < needCount();
+        boolean zeroCam = zeroCam();   // 要用的摄像头里有一颗从没出过一帧
         long limit = configuring ? (zeroCam ? 5000 : 7000) : 3000;   // 建会话比出帧慢，多给点时间
         if (now - wdSince > limit && !recording && !clipping) {
             wdSince = now;
@@ -1201,7 +1273,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             } else {
                 wdRunning = false;
                 if (zeroCam) {          // 降档也没用：这颗摄像头从来没出过画面，是系统 / 硬件不允许前后同时工作
-                    fail("unsupported", "这台手机的前后摄像头不能同时出画面（" + (frameCnt[0] == 0 ? "后置" : "前置") + "一帧都没有）。" + diag());
+                    unsupported(dual ? "这台手机的前后摄像头不能同时出画面（" + (frameCnt[0] == 0 ? "后置" : "前置") + "一帧都没有）。" + diag() : "摄像头一帧画面都没有。" + diag());
                     return;
                 }
                 degrade("画面一直不动 " + diag());
@@ -1230,6 +1302,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void torch() {
         torchOn = !torchOn;
+        if (!dual && !state.backIsMain) { torchOn = false; say("前置没有手电筒"); syncButtons(); return; }
         try { cm.setTorchMode(backId, torchOn); say(torchOn ? "手电筒：开" : "手电筒：关"); }
         catch (Throwable e) { torchOn = false; say("手电筒不可用（双摄时系统常占用闪光灯）"); }
         syncButtons();
