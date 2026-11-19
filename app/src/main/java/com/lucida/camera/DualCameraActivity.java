@@ -12,6 +12,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
+import android.graphics.Typeface;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -226,12 +227,15 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     @Override protected void onResume() {
         super.onResume(); immersive(); if (glReady) tryOpen();
+        syncLevel();
         if (overlay instanceof DualAlbum) ((DualAlbum) overlay).reload();      // 从系统相册回来：那边删掉的这里也要消失
     }
 
     @Override
     protected void onPause() {
         if (recording) stopRecording();
+        cancelCountdown(false);
+        if (levelListening) { sensors.unregisterListener(levelListener); levelListening = false; }
         if (screenFlashView != null) screenFlash(false);
         flashBusy = false;
         closeCameras();
@@ -285,6 +289,15 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         };
         gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
         root.addView(gridView);
+
+        levelView = new DualLevelView(this);
+        levelView.setVisibility(prefs.level ? View.VISIBLE : View.GONE);
+        root.addView(levelView);
+        countView = DualUi.label(this, "", 110, Color.WHITE);
+        countView.setGravity(Gravity.CENTER); countView.setTypeface(Typeface.DEFAULT_BOLD);
+        countView.setShadowLayer(8f, 0f, 3f, 0x80000000);
+        countView.setVisibility(View.GONE);
+        root.addView(countView);
 
         stageTouch = new FrameLayout(this);
         root.addView(stageTouch);
@@ -490,6 +503,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (gl != null) { gl.vfX = stageX; gl.vfY = stageY; gl.vfW = stageW; gl.vfH = stageH; }
         place(stageTouch, stageX, stageY, stageW, stageH);
         place(gridView, stageX, stageY, stageW, stageH);
+        place(levelView, stageX, stageY, stageW, stageH);
+        place(countView, stageX, stageY, stageW, stageH);
         place(zoomBar, stageX, stageY + stageH - dp(160), stageW, dp(160));
         // 顶部
         int y0 = top + dp(4), s = dp(40);
@@ -568,7 +583,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int f = prefs.fps;
         if (effTier > DualPlan.startTier(prefs.res)) r = new String[]{"4K", "2.8K", "1080p", "720p"}[Math.max(0, Math.min(3, effTier))] + "↓";
         if (effFps < f) { f = effFps; r = r.endsWith("↓") ? r : r + "↓"; }
-        specPill.setText(r + " · " + f + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : "") + new String[]{"", " · ⚡自动", " · ⚡开"}[prefs.flash]);
+        specPill.setText(r + " · " + f + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : "") + new String[]{"", " · ⚡自动", " · ⚡开"}[prefs.flash] + (prefs.timerSec > 0 ? " · ⏱" + prefs.timerSec + "s" : ""));
         specPill.requestLayout();
     }
 
@@ -630,6 +645,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             @Override public void onChanged(boolean reconfigure) {
                 state.mirrorFront = prefs.mirror; if (gl != null) gl.borderMode = prefs.pipBorder;
                 gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
+                syncLevel();
                 if (lastGlass != prefs.glass) applyGlass();
                 if (prefs.fullRate) {
                     pendingThrottle = false;
@@ -655,6 +671,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     @Override public void openPalette() { closeOverlay(); setPalette(true); }
                     @Override public void openRatio() { closeOverlay(); setSpecPanel(true); }
                     @Override public int flashMode() { return prefs.flash; }
+                    @Override public int timerSec() { return prefs.timerSec; }
+                    @Override public int cycleTimer() {
+                        int[] seq = {0, 3, 5, 10}; int k = 0; for (int i = 0; i < 4; i++) if (seq[i] == prefs.timerSec) k = i;
+                        prefs.timerSec = seq[(k + 1) % 4]; prefs.save(); syncSpecPill(); return prefs.timerSec; }
                     @Override public int cycleFlash() { prefs.flash = (prefs.flash + 1) % 3; prefs.save(); syncSpecPill(); return prefs.flash; }
                 });
         overlay = v; root.addView(v, new FrameLayout.LayoutParams(-1, -1));
@@ -1503,6 +1523,70 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void shutterTapped() {
+        if (!glReady || gl == null || flashBusy) return;
+        if (counting) { cancelCountdown(true); return; }
+        if (prefs.timerSec > 0 && !recording) { startCountdown(prefs.timerSec); return; }
+        fireShutter();
+    }
+
+    // ---------------------------------------------------------------- 倒计时 / 水平仪
+
+    private DualLevelView levelView;
+    private TextView countView;
+    private boolean counting;
+    private int countLeft;
+    private android.hardware.SensorManager sensors;
+    private final android.hardware.SensorEventListener levelListener = new android.hardware.SensorEventListener() {
+        @Override public void onSensorChanged(android.hardware.SensorEvent e) {
+            float g = 9.80665f;      // Android 传感器给的是「向上的加速度」，和 iOS 的重力方向相反，取反后两端一致
+            if (levelView != null) levelView.setGravity(-e.values[0] / g, -e.values[1] / g, -e.values[2] / g);
+        }
+        @Override public void onAccuracyChanged(android.hardware.Sensor s, int a) {}
+    };
+    private boolean levelListening;
+
+    /** 水平仪开着才读重力传感器 */
+    private void syncLevel() {
+        if (levelView == null) return;
+        levelView.setVisibility(prefs.level ? View.VISIBLE : View.GONE);
+        if (prefs.level && !levelListening) {
+            if (sensors == null) sensors = (android.hardware.SensorManager) getSystemService(Context.SENSOR_SERVICE);
+            android.hardware.Sensor s = sensors == null ? null : sensors.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY);
+            if (s == null && sensors != null) s = sensors.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
+            if (s == null) { say("这台手机没有重力传感器，水平仪不可用"); return; }
+            levelListening = sensors.registerListener(levelListener, s, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+        } else if (!prefs.level && levelListening) {
+            sensors.unregisterListener(levelListener); levelListening = false;
+        }
+    }
+
+    private final Runnable countTick = new Runnable() { @Override public void run() {
+        if (!counting) return;
+        countLeft--;
+        if (countLeft > 0) { showCount(); ui.postDelayed(this, 1000); return; }
+        counting = false; countView.setVisibility(View.GONE);
+        fireShutter();
+    } };
+
+    private void showCount() {
+        countView.setText(String.valueOf(countLeft)); countView.setVisibility(View.VISIBLE);
+        countView.setScaleX(1.35f); countView.setScaleY(1.35f); countView.setAlpha(.3f);
+        countView.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(300).start();
+        try { countView.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY); } catch (Throwable ignore) {}
+    }
+
+    private void startCountdown(int sec) {
+        counting = true; countLeft = sec; showCount();
+        ui.postDelayed(countTick, 1000);
+    }
+
+    private void cancelCountdown(boolean msg) {
+        if (!counting) return;
+        counting = false; ui.removeCallbacks(countTick); countView.setVisibility(View.GONE);
+        if (msg) say("已取消倒计时");
+    }
+
+    private void fireShutter() {
         if (!glReady || gl == null || flashBusy) return;
         if (!videoMode) takePhoto();
         else if (recording) stopRecording();

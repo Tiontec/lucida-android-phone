@@ -9,7 +9,7 @@ final class PanelRegistry {
     private PanelRegistry() {}
 
     static final int ST_ENABLED = 0, ST_SOON = 1;                 // ENABLED = 正常可点；SOON = 灰色，点击提示「未加入此功能」
-    static final int A_NONE = 0, A_OPEN_PALETTE = 1, A_TOGGLE_DUAL = 2, A_OPEN_RATIO = 3, A_CYCLE_FLASH = 4;
+    static final int A_NONE = 0, A_OPEN_PALETTE = 1, A_TOGGLE_DUAL = 2, A_OPEN_RATIO = 3, A_CYCLE_FLASH = 4, A_CYCLE_TIMER = 5;
 
     static final class Item {
         final String id, title;
@@ -23,7 +23,7 @@ final class PanelRegistry {
         new Item("flash", "闪光灯", PanelGlyph.BOLT, ST_ENABLED, A_CYCLE_FLASH),
         new Item("palette", "调色盘", PanelGlyph.PALETTE, ST_ENABLED, A_OPEN_PALETTE),
         new Item("ratio", "比例", PanelGlyph.RATIO, ST_ENABLED, A_OPEN_RATIO),
-        new Item("timer", "倒计时", PanelGlyph.TIMER, ST_SOON, A_NONE),
+        new Item("timer", "倒计时", PanelGlyph.TIMER, ST_ENABLED, A_CYCLE_TIMER),
         new Item("pano", "360° 全景", PanelGlyph.GLOBE, ST_SOON, A_NONE),
         new Item("dual", "前后双摄", PanelGlyph.DUAL, ST_ENABLED, A_TOGGLE_DUAL),
         new Item("space", "空间重构", PanelGlyph.CUBE, ST_SOON, A_NONE),

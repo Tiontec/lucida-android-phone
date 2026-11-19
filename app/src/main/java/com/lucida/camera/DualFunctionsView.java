@@ -38,6 +38,10 @@ final class DualFunctionsView extends FrameLayout {
         int flashMode();
         /** 切到下一档，返回新的模式 */
         int cycleFlash();
+        /** 倒计时当前秒数（0 / 3 / 5 / 10） */
+        int timerSec();
+        /** 切到下一档，返回新的秒数 */
+        int cycleTimer();
     }
 
     private final Runnable onClose, onSettings;
@@ -115,6 +119,7 @@ final class DualFunctionsView extends FrameLayout {
             tiles[i] = t;
             if (it.action == PanelRegistry.A_TOGGLE_DUAL) t.glyph.setActive(host.isDual());
             if (it.action == PanelRegistry.A_CYCLE_FLASH) t.glyph.setActive(host.flashMode() != 0);
+            if (it.action == PanelRegistry.A_CYCLE_TIMER) t.glyph.setActive(host.timerSec() != 0);
         }
         shownDual = host.isDual();
 
@@ -240,6 +245,10 @@ final class DualFunctionsView extends FrameLayout {
             int m = host.cycleFlash();
             tile.glyph.setActive(m != 0);
             showToast(new String[]{"闪光灯：关", "闪光灯：自动（暗处才闪）", "闪光灯：开"}[m]);
+        } else if (it.action == PanelRegistry.A_CYCLE_TIMER) {
+            int s = host.cycleTimer();
+            tile.glyph.setActive(s != 0);
+            showToast(s == 0 ? "倒计时：关" : "倒计时：" + s + " 秒（点快门后倒数，再点一下取消）");
         } else {
             showToast(SettingsRegistry.PANEL_SOON_TOAST);
         }

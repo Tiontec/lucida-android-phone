@@ -68,6 +68,8 @@ final class DualSettingsView extends FrameLayout {
             @Override public void on(boolean v) { p.mirror = v; p.save(); host.onChanged(false); } }));
         add(list, DualUi.toggleRow(c, "录像时录制声音", null, p.audio, new DualUi.BoolCb() {
             @Override public void on(boolean v) { p.audio = v; p.save(); host.onChanged(false); } }));
+        add(list, DualUi.toggleRow(c, "水平仪", "取景框中间显示水平线：竖拿手机时线跟地平线平行，歪在 0.8° 内变黄；手机平放俯拍时变成圆圈 + 小圆点", p.level, new DualUi.BoolCb() {
+            @Override public void on(boolean v) { p.level = v; p.save(); host.onChanged(false); } }));
         add(list, DualUi.toggleRow(c, "取景网格线", null, p.gridLines, new DualUi.BoolCb() {
             @Override public void on(boolean v) { p.gridLines = v; p.save(); host.onChanged(false); } }));
         add(list, DualUi.toggleRow(c, "满帧画面运行录制", "开：手机发热也不降帧，按你选的帧率显示和录制（可能更烫、更耗电）；关：过热时自动降到 30 帧保护手机", p.fullRate, new DualUi.BoolCb() {
