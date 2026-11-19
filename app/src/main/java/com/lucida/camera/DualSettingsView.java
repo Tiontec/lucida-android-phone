@@ -52,7 +52,7 @@ final class DualSettingsView extends FrameLayout {
             @Override public void on(int i) { p.liveDur = durs[i]; p.save(); host.onChanged(false); } })));
         add(list, DualUi.card(c, "实况保存方式", DualUi.seg(c, new String[]{"动态照片（单文件）", "照片 + 视频分开"}, p.liveSeparate ? 1 : 0, new DualUi.IntCb() {
             @Override public void on(int i) { p.liveSeparate = i == 1; p.save(); host.onChanged(false); } })));
-        add(list, note(c, "安卓没有苹果那种实况照片：动态照片 = 一张 JPEG 里内嵌从按下快门开始的短视频，Google 相册等支持动态照片的相册可播放；没有快门前 1.5 秒，也没有声音。"));
+        add(list, note(c, "安卓没有苹果那种实况照片：动态照片 = 一张 JPEG 里内嵌从按下快门开始的短视频，Google 相册等支持动态照片的相册可播放；没有快门前 1.5 秒；声音跟随「录像时录制声音」开关。"));
         add(list, DualUi.toggleRow(c, "实况计时显示", "拍实况时在取景框左上角显示已经拍到第几秒、有没有拍完", p.liveTimer, new DualUi.BoolCb() {
             @Override public void on(boolean v) { p.liveTimer = v; p.save(); host.onChanged(false); } }));
         add(list, DualUi.toggleRow(c, "片门全开", "前后摄像头都用 4:3 最大规格，成品 3:4；帧率尽量保持所选值", p.fullGate, new DualUi.BoolCb() {
@@ -74,7 +74,7 @@ final class DualSettingsView extends FrameLayout {
             ov[0] = new DualOrderView(getContext(), p, new Runnable() { @Override public void run() { removeView(ov[0]); host.onChanged(false); } });
             addView(ov[0], new FrameLayout.LayoutParams(-1, -1));
         } }));
-        add(list, note(c, "说明：多摄同时工作时系统不提供 RAW；动态照片没有声音。"));
+        add(list, note(c, "说明：多摄同时工作时系统不提供 RAW；动态照片声音跟随「录像时录制声音」。"));
     }
 
     static View linkRow(Context c, String title, String sub, final Runnable go) {

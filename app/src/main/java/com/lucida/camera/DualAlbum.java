@@ -303,14 +303,20 @@ final class DualAlbum extends FrameLayout {
         final Context c = getContext();
         new Thread(new Runnable() { @Override public void run() {
             final File clip = DualLibrary.extractClip(c, e);
-            if (clip == null) return;
+            if (clip == null) {
+                AppLog.error("相册", "取不出动态照片里的视频：" + e.id + "（内嵌长度 " + e.videoLen + "）");
+                ui.post(new Runnable() { @Override public void run() { android.widget.Toast.makeText(c, "这张动态照片里的视频读不出来", android.widget.Toast.LENGTH_SHORT).show(); } });
+                return;
+            }
             ui.post(new Runnable() { @Override public void run() {
                 if (my != token[0]) return;                       // 已经翻页了
                 final VideoView vv = new VideoView(c);
                 vv.setBackgroundColor(Color.BLACK);
                 holder.addView(vv, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
                 vv.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() { @Override public void onCompletion(android.media.MediaPlayer mp) { holder.removeView(vv); } });
-                vv.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() { @Override public boolean onError(android.media.MediaPlayer mp, int w, int x) { holder.removeView(vv); return true; } });
+                vv.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() { @Override public boolean onError(android.media.MediaPlayer mp, int w, int x) {
+                    AppLog.error("相册", "动态照片播放出错 what=" + w + " extra=" + x); holder.removeView(vv);
+                    android.widget.Toast.makeText(c, "动态照片播放失败（" + w + "/" + x + "）", android.widget.Toast.LENGTH_SHORT).show(); return true; } });
                 vv.setOnClickListener(new OnClickListener() { @Override public void onClick(View x) { vv.stopPlayback(); holder.removeView(vv); } });
                 vv.setVideoPath(clip.getAbsolutePath()); vv.start();
             } });

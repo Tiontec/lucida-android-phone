@@ -97,16 +97,51 @@ final class DualLibrary {
 
     private static final Pattern OFFSET = Pattern.compile("MicroVideoOffset=\"(\\d+)\"");
 
-    /** 动态照片（MicroVideo）：读文件头里的 XMP，取出内嵌视频的长度；不是动态照片返回 0 */
+    private static final java.util.HashMap<String, Long> LEN_CACHE = new java.util.HashMap<String, Long>();
+
+    /**
+     * 动态照片：内嵌视频的长度（从文件末尾往回数）；不是动态照片返回 0。
+     * 先读文件头里的 XMP（MicroVideoOffset）；读不到（有的系统会改写 / 抹掉 XMP）就在文件里找 MP4 的 "ftyp" 标记兜底。结果记在内存里，不重复读。
+     */
     static long motionVideoLen(Context c, Uri u) {
+        String key = u.toString();
+        synchronized (LEN_CACHE) { Long hit = LEN_CACHE.get(key); if (hit != null) return hit; }
+        long len = 0;
         try (InputStream in = c.getContentResolver().openInputStream(u)) {
-            if (in == null) return 0;
-            byte[] b = new byte[90000]; int n = 0, r;
-            while (n < b.length && (r = in.read(b, n, b.length - n)) > 0) n += r;
-            Matcher m = OFFSET.matcher(new String(b, 0, n, "ISO-8859-1"));
-            return m.find() ? Long.parseLong(m.group(1)) : 0;
-        } catch (Throwable t) { return 0; }
+            if (in != null) {
+                ByteArrayOutputStream bo = new ByteArrayOutputStream(1 << 20);
+                byte[] buf = new byte[65536]; int n;
+                while ((n = in.read(buf)) > 0 && bo.size() < 80 * 1024 * 1024) bo.write(buf, 0, n);
+                byte[] all = bo.toByteArray();
+                int head = Math.min(all.length, 90000);
+                Matcher m = OFFSET.matcher(new String(all, 0, head, "ISO-8859-1"));
+                if (m.find()) len = Long.parseLong(m.group(1));
+                if (len <= 0 || len >= all.length) {
+                    len = 0;
+                    int at = findMp4(all);
+                    if (at > 0) len = all.length - at;
+                }
+            }
+        } catch (Throwable t) { AppLog.warn("相册", "检测动态照片失败：" + t); }
+        if (len > 0) AppLog.info("相册", "动态照片：内嵌视频 " + len + " 字节");
+        synchronized (LEN_CACHE) { LEN_CACHE.put(key, len); }
+        return len;
     }
+
+    /** 在 JPEG 之后找内嵌 MP4 的起点（"ftyp" 前面 4 个字节是盒子长度）；找不到返回 -1 */
+    private static int findMp4(byte[] a) {
+        for (int i = 2000; i + 12 < a.length; i++) {
+            if (a[i] == 'f' && a[i + 1] == 't' && a[i + 2] == 'y' && a[i + 3] == 'p') {
+                int size = ((a[i - 4] & 0xFF) << 24) | ((a[i - 3] & 0xFF) << 16) | ((a[i - 2] & 0xFF) << 8) | (a[i - 1] & 0xFF);
+                boolean brand = a[i + 4] >= 'a' && a[i + 4] <= 'z' && a[i + 5] >= 'a' && a[i + 5] <= 'z';
+                if (size >= 16 && size <= 128 && brand) return i - 4;
+            }
+        }
+        return -1;
+    }
+
+    /** 删掉这张的检测缓存（删除 / 重新保存时用） */
+    static void forget(String id) { synchronized (LEN_CACHE) { LEN_CACHE.remove(id); } }
 
     /** 把动态照片里内嵌的视频取出来放到缓存目录，返回文件（后台线程调用） */
     static File extractClip(Context c, Entry e) {

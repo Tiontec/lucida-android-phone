@@ -30,6 +30,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import android.view.Choreographer;
 import android.util.Range;
 import android.util.Size;
 import android.view.GestureDetector;
@@ -168,6 +169,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        AppLog.init(this);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         useWholeScreen(this);
@@ -302,8 +304,13 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     case MotionEvent.ACTION_DOWN:
                         setSpecPanel(false);
                         sx = e.getX(); sy = e.getY();
+                        if (gDownPip) startPipDrag();
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        stopPipDrag();
                         return true;
                     case MotionEvent.ACTION_UP:
+                        stopPipDrag();
                         // 调色盘打开时左右滑：按「预设顺序」换预设
                         if (paletteOpen && Math.abs(e.getX() - sx) > dp(60) && Math.abs(e.getX() - sx) > Math.abs(e.getY() - sy) * 1.3f) stepPreset(e.getX() < sx ? 1 : -1);
                         return true;
@@ -314,7 +321,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
         zoomBar = new ZoomBar(this);
         zoomBar.setListener(new ZoomBar.Listener() { @Override public void onZoom(float z) {
-            int c = mainCam(); zoomCur[c] = z; applyZoom(c);
+            int c = mainCam(); zoomCur[c] = z; if (c == 0) maybeSwitchLens(z); applyZoom(c);
         } });
         root.addView(zoomBar);
 
@@ -421,6 +428,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         return v;
     }
 
+    private static int idxOf(int[] a, int v) { for (int i = 0; i < a.length; i++) if (a[i] == v) return i; return 1; }
+
     private void buildSpecPanel() {
         specPanel = new LinearLayout(this);
         specPanel.setOrientation(LinearLayout.VERTICAL);
@@ -430,9 +439,11 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int ri = 1, fi = 1;
         for (int i = 0; i < 3; i++) { if (resV[i] == prefs.res) ri = i; if (fpsV[i] == prefs.fps) fi = i; }
         segRes = DualUi.seg(this, new String[]{"720p", "1080p", "4K"}, ri, new DualUi.IntCb() { @Override public void on(int i) {
-            prefs.res = resV[i]; prefs.save(); restartWithPrefs(); } });
+            if (recording || clipping) { say("录像 / 实况拍摄中不能改规格"); DualUi.setSeg(segRes, idxOf(resV, prefs.res)); return; }
+            prefs.res = resV[i]; prefs.save(); restartWithPrefs(); syncSpecPill(); } });
         segFps = DualUi.seg(this, new String[]{"24", "30", "60"}, fi, new DualUi.IntCb() { @Override public void on(int i) {
-            prefs.fps = fpsV[i]; prefs.save(); restartWithPrefs(); } });
+            if (recording || clipping) { say("录像 / 实况拍摄中不能改规格"); DualUi.setSeg(segFps, idxOf(fpsV, prefs.fps)); return; }
+            prefs.fps = fpsV[i]; prefs.save(); restartWithPrefs(); syncSpecPill(); } });
         boolean heifOk = Build.VERSION.SDK_INT >= 34;
         segFmt = DualUi.seg(this, new String[]{"JPEG", "HEIF"}, prefs.heif && heifOk ? 1 : 0, new DualUi.IntCb() { @Override public void on(int i) {
             if (i == 1 && Build.VERSION.SDK_INT < 34) { DualUi.setSeg(segFmt, 0); say("HEIF 需要 Android 14 及以上"); return; }
@@ -540,9 +551,15 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         btnTorch.setEnabled(!noTorch); btnTorch.setAlpha(noTorch ? .4f : 1f);
     }
 
+    /** 顶部规格药丸：显示「实际在用」的规格（过热 / 带宽不够自动降档后，显示降档后的），没降档时就是所选的 */
     private void syncSpecPill() {
+        if (Looper.myLooper() != Looper.getMainLooper()) { ui.post(new Runnable() { @Override public void run() { syncSpecPill(); } }); return; }
+        if (specPill == null) return;
         String r = prefs.res == 2160 ? "4K" : prefs.res + "p";
-        specPill.setText(r + " · " + prefs.fps + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : ""));
+        int f = prefs.fps;
+        if (effTier > DualPlan.startTier(prefs.res)) r = new String[]{"4K", "2.8K", "1080p", "720p"}[Math.max(0, Math.min(3, effTier))] + "↓";
+        if (effFps < f) { f = effFps; r = r.endsWith("↓") ? r : r + "↓"; }
+        specPill.setText(r + " · " + f + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : ""));
         specPill.requestLayout();
     }
 
@@ -593,7 +610,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void toggleLive() {
         prefs.live = !prefs.live; prefs.save(); syncButtons();
-        say(prefs.live ? "实况已开启（动态照片 " + prefs.liveDur + " 秒，从按下快门开始，无声音）" : "实况已关闭");
+        say(prefs.live ? "实况已开启（动态照片 " + prefs.liveDur + " 秒，从按下快门开始，" + (prefs.audio ? "带声音" : "无声音（录像声音开关已关）") + "）" : "实况已关闭");
     }
 
     private void openSettings() {
@@ -778,6 +795,39 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         focusAt(x, y, false);
     }
 
+    // ---- 小窗拖动：按设置的帧率（60 / 120）重画取景。摄像头只有 30 / 60 帧，不重画的话小窗只能跟着摄像头一格一格地动
+    private volatile boolean pipDragging;
+    private volatile long lastDrawNs;
+    private long dragGapNs;
+    private final java.util.concurrent.atomic.AtomicBoolean dragPending = new java.util.concurrent.atomic.AtomicBoolean();
+    private final Runnable dragRedraw = new Runnable() { @Override public void run() {
+        dragPending.set(false);
+        if (gl == null || finished || !pipDragging) return;
+        if (System.nanoTime() - lastDrawNs < dragGapNs) return;     // 摄像头刚来了新画面，已经画过了
+        try { gl.drawPreview(); lastDrawNs = System.nanoTime(); } catch (Throwable ignore) {}
+    } };
+    private final Choreographer.FrameCallback dragTick = new Choreographer.FrameCallback() { @Override public void doFrame(long frameTimeNanos) {
+        if (!pipDragging) return;
+        Choreographer.getInstance().postFrameCallback(this);
+        if (glH != null && dragPending.compareAndSet(false, true)) glH.post(dragRedraw);
+    } };
+
+    private void startPipDrag() {
+        int fps = new SettingsStore(prefs).pipDragFps();
+        if (fps <= 30 || !dual || state.style != DualState.STYLE_PIP || pipDragging) return;
+        dragGapNs = (long) (1e9 / fps * 0.8);
+        pipDragging = true;
+        try { WindowManager.LayoutParams a = getWindow().getAttributes(); a.preferredRefreshRate = fps; getWindow().setAttributes(a); } catch (Throwable ignore) {}
+        Choreographer.getInstance().postFrameCallback(dragTick);
+    }
+
+    private void stopPipDrag() {
+        if (!pipDragging) return;
+        pipDragging = false;
+        Choreographer.getInstance().removeFrameCallback(dragTick);
+        try { WindowManager.LayoutParams a = getWindow().getAttributes(); a.preferredRefreshRate = 0f; getWindow().setAttributes(a); } catch (Throwable ignore) {}
+    }
+
     private void dragBy(float mx, float my) {
         if (gDownPip) {
             float W = stageW, H = stageH, w = Math.round(W * state.pipW), h = Math.round(w * 4f / 3f), m = Math.round(W * 0.04f);
@@ -810,7 +860,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
         float aw = a.width(), ah = a.height(), sa = (float) streamW[cam] / Math.max(1, streamH[cam]), cw, ch;
         if (sa > aw / ah) { cw = aw; ch = aw / sa; } else { ch = ah; cw = ah * sa; }
-        float z = Math.max(1f, zoomCur[cam]); cw /= z; ch /= z;
+        float z = Math.max(1f, reqZoom(cam)); cw /= z; ch /= z;
         float cx = a.left + aw / 2f + (su - .5f) * cw, cy = a.top + ah / 2f + (sv - .5f) * ch;
         int half = Math.max(8, Math.round(Math.min(aw, ah) * .08f));
         int l = Math.max(a.left, Math.min(a.right - 2 * half - 1, Math.round(cx) - half));
@@ -919,12 +969,135 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void throttleNow() {
-        pendingThrottle = false; throttled = true; effFps = 30;
+        pendingThrottle = false; throttled = true; effFps = 30; syncSpecPill();
         say("手机过热，已自动降到 30 帧保护手机（想一直满帧：更多设置 → 满帧画面运行录制）");
         restart();
     }
 
     // ---------------------------------------------------------------- 摄像头 / 规格
+
+    /** 读一颗摄像头的特性（倍数范围 / 传感器方向 / 曝光补偿 / 测光区域上限）。initZoom = 第一次读，顺便把倍数放到 1× */
+    private void loadChars(int cam, boolean initZoom) {
+        if ((cam == 0 ? backId : frontId) == null) return;
+        try {
+            CameraCharacteristics c = cm.getCameraCharacteristics(cam == 0 ? backId : frontId);
+            activeArr[cam] = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+            float lo = 1f, hi = 1f;
+            if (Build.VERSION.SDK_INT >= 30) {
+                Range<Float> r = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+                if (r != null) { lo = r.getLower(); hi = r.getUpper(); }
+            }
+            if (hi <= 1.01f) {
+                Float m = c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
+                hi = m == null ? 1f : m; lo = 1f;
+            }
+            zoomMin[cam] = Math.max(0.1f, lo);
+            zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, 30f));
+            if (initZoom) zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
+            Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            senOri[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
+            Range<Integer> er = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+            if (er != null) { evLo[cam] = er.getLower(); evHi[cam] = er.getUpper(); }
+            android.util.Rational es = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
+            evStep[cam] = es == null ? 1f : es.floatValue();
+            Integer ma = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF), me = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
+            maxAf[cam] = ma == null ? 0 : ma; maxAe[cam] = me == null ? 0 : me;
+        } catch (Throwable ignore) {}
+    }
+
+    // ---------------------------------------------------------------- 多镜头（超广角 / 长焦）
+
+    private String mainBackId, uwId, teleId;       // 主镜头（广角）/ 超广角 / 长焦（找不到就是 null）
+    private float uwRatio = .5f, teleRatio = 3f;   // 相对主镜头的等效倍数
+    private float extMin = 1f, extMax = 1f;        // 单摄后置时转盘的范围（含超广角 / 长焦）
+    private int curLens;                           // 0 主 / -1 超广角 / 1 长焦
+    private volatile long lensBusyUntil;
+    String lensReport = "";
+
+    /** 等效 35mm 焦距；读不到返回 -1 */
+    private float eqFocal(CameraCharacteristics c) {
+        try {
+            float[] fl = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+            android.util.SizeF sz = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+            if (fl == null || fl.length == 0 || sz == null) return -1f;
+            double diag = Math.hypot(sz.getWidth(), sz.getHeight());
+            return diag <= 0 ? -1f : (float) (fl[0] * 43.27 / diag);
+        } catch (Throwable t) { return -1f; }
+    }
+
+    /**
+     * 找超广角 / 长焦：枚举所有后置镜头，按等效焦距分类（比主镜头短一大截 = 超广角；长 1.5 倍以上 = 长焦）。
+     * 画素太低的（微距 / 景深 2MP）和黑白镜头不要。手机把多镜头合成一颗「逻辑摄像头」、倍数范围已经含 <1× 的，系统自己会换镜头，这里不用管。
+     * 只有一颗后置镜头的手机（比如 OPPO A57）找不到就什么都不加，行为和以前一样。
+     */
+    private void classifyLenses() {
+        uwId = null; teleId = null; extMin = zoomMin[0]; extMax = zoomMax[0];
+        StringBuilder rep = new StringBuilder();
+        try {
+            if (mainBackId == null) return;
+            if (zoomMin[0] < 0.98f) { lensReport = "后置是合成摄像头，系统自动切换超广角 / 长焦（倍数 " + zoomMin[0] + "–" + zoomMax[0] + "）"; return; }
+            float mainEq = eqFocal(cm.getCameraCharacteristics(mainBackId));
+            if (mainEq <= 0) { lensReport = "读不到主镜头焦距，不启用多镜头"; return; }
+            long bestUw = 0, bestTele = 0;
+            for (String id : cm.getCameraIdList()) {
+                CameraCharacteristics c = cm.getCameraCharacteristics(id);
+                Integer f = c.get(CameraCharacteristics.LENS_FACING);
+                if (f == null || f != CameraCharacteristics.LENS_FACING_BACK) continue;
+                float eq = eqFocal(c);
+                Rect ar = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+                long px = ar == null ? 0 : (long) ar.width() * ar.height();
+                int[] caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+                boolean ok = false, mono = false;
+                if (caps != null) for (int k : caps) { if (k == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) ok = true; if (k == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MONOCHROME) mono = true; }
+                rep.append(id).append(": 等效").append(Math.round(eq)).append("mm ").append(px / 1000000f).append("MP").append(ok && !mono ? "" : "（不可用）").append("；");
+                if (id.equals(mainBackId) || !ok || mono || eq <= 0 || px < 2500000L) continue;
+                float r = eq / mainEq;
+                if (r >= .3f && r <= .85f && px > bestUw) { bestUw = px; uwId = id; uwRatio = Math.round(r * 10f) / 10f; }
+                else if (r >= 1.5f && px > bestTele) { bestTele = px; teleId = id; teleRatio = Math.round(r * 2f) / 2f; }
+            }
+        } catch (Throwable t) { rep.append("枚举出错：").append(t); }
+        if (uwId != null) extMin = Math.min(extMin, uwRatio);
+        if (teleId != null) extMax = Math.min(30f, Math.max(extMax, teleRatio * 4f));
+        lensReport = (uwId != null ? "超广角 " + uwId + "（" + uwRatio + "×）" : "无超广角") + "，" + (teleId != null ? "长焦 " + teleId + "（" + teleRatio + "×）" : "无长焦") + "。后置镜头：" + rep;
+        AppLog.info("镜头", lensReport);
+    }
+
+    private boolean lensExtOn() { return !dual && state.backIsMain && (uwId != null || teleId != null); }
+
+    /** 这颗摄像头请求里该写的倍数：超广角 / 长焦镜头自己的倍数 = 总倍数 ÷ 它相对主镜头的倍率（主镜头不变） */
+    private float reqZoom(int cam) {
+        float z = zoomCur[cam];
+        if (cam != 0) return z;
+        float r = curLens < 0 ? Math.max(1f, z / uwRatio) : curLens > 0 ? Math.max(1f, z / teleRatio) : z;
+        if (lensExtOn()) r = Math.max(zoomMin[0], Math.min(zoomMax[0], r));       // 别超出当前这颗镜头自己的倍数范围
+        return r;
+    }
+
+    /** 转盘倍数变了：该换镜头就换（单摄后置才换；双摄 / 录像中不换） */
+    private void maybeSwitchLens(float z) {
+        if (!lensExtOn()) return;
+        int want = (uwId != null && z < 0.995f) ? -1 : (teleId != null && z >= teleRatio * 0.995f) ? 1 : 0;
+        if (want == curLens) return;
+        if (recording || clipping) return;
+        if (System.currentTimeMillis() < lensBusyUntil) return;
+        switchLens(want);
+    }
+
+    private void switchLens(int want) {
+        String id = want < 0 ? uwId : want > 0 ? teleId : mainBackId;
+        if (id == null) return;
+        curLens = want; backId = id;
+        lensBusyUntil = System.currentTimeMillis() + 900;
+        AppLog.info("镜头", "切换到" + (want < 0 ? "超广角" : want > 0 ? "长焦" : "主镜头") + "（id " + id + "）");
+        loadChars(0, false);
+        restart();
+    }
+
+    /** 回到主镜头（双摄 / 切换前后时用） */
+    private void forceMainLens() {
+        if (curLens == 0 || mainBackId == null) return;
+        curLens = 0; backId = mainBackId; loadChars(0, false);
+    }
 
     private boolean pickCameras() {
         try {
@@ -937,33 +1110,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             }
         } catch (Exception e) { return false; }
         if (backId == null && frontId == null) return false;
-        for (int cam = 0; cam < 2; cam++) {
-            if ((cam == 0 ? backId : frontId) == null) continue;
-            try {
-                CameraCharacteristics c = cm.getCameraCharacteristics(cam == 0 ? backId : frontId);
-                activeArr[cam] = c.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-                float lo = 1f, hi = 1f;
-                if (Build.VERSION.SDK_INT >= 30) {
-                    Range<Float> r = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
-                    if (r != null) { lo = r.getLower(); hi = r.getUpper(); }
-                }
-                if (hi <= 1.01f) {
-                    Float m = c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM);
-                    hi = m == null ? 1f : m; lo = 1f;
-                }
-                zoomMin[cam] = Math.max(0.1f, lo);
-                zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, 30f));
-                zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
-                Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                senOri[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
-                Range<Integer> er = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
-                if (er != null) { evLo[cam] = er.getLower(); evHi[cam] = er.getUpper(); }
-                android.util.Rational es = c.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP);
-                evStep[cam] = es == null ? 1f : es.floatValue();
-                Integer ma = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF), me = c.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE);
-                maxAf[cam] = ma == null ? 0 : ma; maxAe[cam] = me == null ? 0 : me;
-            } catch (Throwable ignore) {}
-        }
+        mainBackId = backId;
+        for (int cam = 0; cam < 2; cam++) loadChars(cam, true);
+        classifyLenses();
         return true;
     }
 
@@ -980,9 +1129,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         dual = false; prefs.dualOn = false; prefs.save();
         state.backIsMain = !prefs.singleFront;
         lastDualFail = msg;
+        AppLog.warn("双摄", "双摄不可用，退回单摄：" + msg);
         final String shortMsg = msg.indexOf("［诊断］") > 0 ? msg.substring(0, msg.indexOf("［诊断］")) : msg;
         ui.post(new Runnable() { @Override public void run() {
-            degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
+            degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res); syncSpecPill();
             if (gl != null) gl.single = true;
             syncButtons(); syncDial(); restart();
             say("双摄不可使用，已退回单摄：" + shortMsg + "（详细原因在「功能」面板里）");
@@ -994,10 +1144,11 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (on == dual) return;
         if (recording || clipping) { say("录像 / 实况拍摄中不能切换"); return; }
         dual = on; prefs.dualOn = on; prefs.save(); lastDualFail = "";
+        if (on) { forceMainLens(); zoomCur[0] = Math.max(zoomMin[0], Math.min(zoomMax[0], Math.max(1f, zoomCur[0]))); }     // 双摄时后置只用主镜头
         state.backIsMain = on ? true : !prefs.singleFront;
         if (gl != null) gl.single = !on;
         if (torchOn) { torchOn = false; try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {} }
-        degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res);
+        degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res); syncSpecPill();
         clearFocusAll();
         syncButtons(); syncDial(); restart();
         say(on ? "正在开启双摄…（这台手机不支持时会自动退回单摄）" : "已切换到单摄");
@@ -1006,7 +1157,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void syncDial() {
         if (zoomBar == null) return;
         int c = mainCam();
-        zoomBar.setRange(zoomMin[c], zoomMax[c], zoomMin[c] < 0.98f);
+        boolean ext = c == 0 && lensExtOn();             // 单摄后置：转盘范围含超广角 / 长焦
+        float lo = ext ? extMin : zoomMin[c], hi = ext ? extMax : zoomMax[c];
+        zoomBar.setRange(lo, hi, lo < 0.98f);
         zoomBar.setZoom(zoomCur[c]);
         lastBackMain = state.backIsMain;
     }
@@ -1059,6 +1212,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (recording || clipping) { say("录像中不能改规格"); return; }
         throttled = false; pendingThrottle = false;
         effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res); degradeCount = 0;
+        syncSpecPill();
         restart();
     }
 
@@ -1077,7 +1231,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (effFps > 30) effFps = 30;
         else if (effTier < 3) effTier++;
         else { unsupported(dual ? "这台设备配置不出前后摄像头同时输出（" + why + "）" : "这颗摄像头配置不出可用的规格（" + why + "）"); return; }
+        AppLog.warn("降档", "原因：" + why + "；现在 " + effTier + " 档@" + effFps);
         say(dual ? "同时开前后摄像头时硬件撑不住所选规格，已自动降档" : "摄像头撑不住所选规格，已自动降档");
+        syncSpecPill();
         restart();
     }
 
@@ -1208,7 +1364,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void fillReq(int cam, CaptureRequest.Builder rb) {
         rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
         if (reqStage < 2) rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
-        float z = zoomCur[cam];
+        float z = reqZoom(cam);
         if (Build.VERSION.SDK_INT >= 30) rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z);
         else {
             Rect a = activeArr[cam];
@@ -1317,7 +1473,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (!both || cam != mainCam()) return;        // 以主画面那颗摄像头的帧率出画面 / 编码
         if (lastBackMain != state.backIsMain) { lastBackMain = state.backIsMain; ui.post(new Runnable() { @Override public void run() { syncDial(); } }); }
         // 帧率 > 35 时，没开「满帧画面运行录制」就只每隔一帧刷新一次屏幕（省电 / 少发热）；录制仍然每帧都编码
-        if (prefs.fullRate || camFps[cam] <= 35 || (++previewN & 1) == 0) { gl.drawPreview(); drawnCnt++; }
+        if (prefs.fullRate || pipDragging || camFps[cam] <= 35 || (++previewN & 1) == 0) { gl.drawPreview(); drawnCnt++; lastDrawNs = System.nanoTime(); }
         if (recording && recorder != null && gl.hasEncoder()) gl.drawEncoder(System.nanoTime() - recStartNs, recW, recH);
         if (gl.hasLive()) gl.drawLive(recW & ~1, recH & ~1);          // 实况短片（可同时好几路）
     }
@@ -1374,7 +1530,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void startLiveClip(final LiveTask t) {
         try {
             File clip = newFile("mp4"); t.clip = clip;
-            DualRecorder r = new DualRecorder(clip, recW & ~1, recH & ~1, false, Math.max(24, Math.min(60, camFps[mainCam()])));
+            DualRecorder r = new DualRecorder(clip, recW & ~1, recH & ~1, prefs.audio && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED, Math.max(24, Math.min(60, camFps[mainCam()])));
             Surface in = r.start();
             t.rec = r;
             t.enc = gl.addLiveEncoder(in, System.nanoTime());
@@ -1554,6 +1710,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (failedReported) return;
         failedReported = true;
         failCode = code; failMsg = msg;
+        AppLog.error("相机", "打不开相机(" + code + ")：" + msg);
         final String title = "denied".equals(code) ? "没有相机权限" : "无法打开相机";
         final String body = "denied".equals(code) ? "请到 系统设置 → 应用 → 澄影重构版 → 权限 里打开相机。" : msg;
         ui.post(new Runnable() { @Override public void run() {
