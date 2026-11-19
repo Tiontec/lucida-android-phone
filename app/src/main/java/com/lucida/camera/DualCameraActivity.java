@@ -120,7 +120,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private ZoomBar zoomBar;
     private DualIcon btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore;
     private TextView specPill, tabPhoto, tabVideo, toast, timer, readout, presetLabel;
-    private LinearLayout specPanel, segRes, segFps, segFmt;
+    private LinearLayout specPanel, segRes, segFps, segFmt, segRatio;
     private View shutterInner, shutterRing, gridView, spinnerView;
     private FrameLayout thumbBox;
     private ImageView thumbImg;
@@ -448,9 +448,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         segFmt = DualUi.seg(this, new String[]{"JPEG", "HEIF"}, prefs.heif && heifOk ? 1 : 0, new DualUi.IntCb() { @Override public void on(int i) {
             if (i == 1 && Build.VERSION.SDK_INT < 34) { DualUi.setSeg(segFmt, 0); say("HEIF 需要 Android 14 及以上"); return; }
             prefs.heif = i == 1; prefs.save(); syncSpecPill(); } });
-        String[] names = {"分辨率", "帧率", "照片格式"};
-        LinearLayout[] segs = {segRes, segFps, segFmt};
-        for (int i = 0; i < 3; i++) {
+        segRatio = DualUi.seg(this, new String[]{"16:9", "4:3", "1:1"}, prefs.ratio, new DualUi.IntCb() { @Override public void on(int i) {
+            if (i == prefs.ratio) return;
+            if (prefs.fullGate) { DualUi.setSeg(segRatio, prefs.ratio); say("「片门全开」开着时画幅固定为 4:3，关掉后才能改"); return; }
+            if (recording || clipping) { DualUi.setSeg(segRatio, prefs.ratio); say("录像 / 实况拍摄中不能改画幅"); return; }
+            prefs.ratio = i; prefs.save(); relayout(); } });
+        String[] names = {"分辨率", "帧率", "照片格式", "画幅"};
+        LinearLayout[] segs = {segRes, segFps, segFmt, segRatio};
+        for (int i = 0; i < segs.length; i++) {
             LinearLayout row = new LinearLayout(this); row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
             TextView l = DualUi.label(this, names[i], 13, 0xB3FFFFFF);
             row.addView(l, new LinearLayout.LayoutParams(dp(64), -2));
@@ -475,7 +480,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int stageTop = top + dp(54);
         int avail = H - stageTop - barH;
         int sw = W, sh;
-        if (prefs.fullGate) { sh = Math.min(W * 4 / 3, avail); sw = sh * 3 / 4; }
+        if (prefs.fullGate || prefs.ratio == 1) { sh = Math.min(W * 4 / 3, avail); sw = sh * 3 / 4; }     // 片门全开固定 3:4
+        else if (prefs.ratio == 2) { sh = Math.min(W, avail); sw = sh; }
         else sh = Math.min(W * 16 / 9, avail);
         stageW = sw; stageH = sh; stageX = (W - sw) / 2; stageY = stageTop;
         if (gl != null) { gl.vfX = stageX; gl.vfY = stageY; gl.vfW = stageW; gl.vfH = stageH; }
