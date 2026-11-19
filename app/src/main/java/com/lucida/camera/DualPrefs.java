@@ -18,6 +18,10 @@ final class DualPrefs {
     int liveDur = 3;           // 3 / 5 / 6 / 8 秒
     boolean liveSeparate = false; // 照片 + 视频分开保存
     boolean heif = false;      // 照片格式 HEIF（Android 14+）
+    int timerSec = 0;          // 倒计时拍摄：0 关 / 3 / 5 / 10 秒
+    boolean level = false;     // 水平仪
+    int flash = 0;             // 拍照闪光灯：0 关 / 1 自动（暗处才闪）/ 2 开
+    int ratio = 0;             // 画幅比例（竖屏）：0 = 16:9（铺满）/ 1 = 4:3 / 2 = 1:1；片门全开时固定 3:4
     int pipShape = 0;          // 小窗形状：0 圆角 / 1 大圆角 / 2 直角
     boolean liveTimer = true;  // 实况计时（取景框左上角）
     boolean glass = false;     // 毛玻璃界面（半透明 + 高光描边；不是系统液态玻璃）
@@ -42,6 +46,10 @@ final class DualPrefs {
         liveSeparate = sp.getBoolean("liveSep", false);
         heif = sp.getBoolean("heif", false);
         pipShape = Math.max(0, Math.min(2, sp.getInt("pipShape", 0)));
+        ratio = Math.max(0, Math.min(2, sp.getInt("ratio", 0)));
+        flash = Math.max(0, Math.min(2, sp.getInt("flash", 0)));
+        timerSec = sp.getInt("timerSec", 0); if (timerSec != 3 && timerSec != 5 && timerSec != 10) timerSec = 0;
+        level = sp.getBoolean("level", false);
         liveTimer = sp.getBoolean("liveTimer", true);
         glass = sp.getBoolean("glass", false);
         gradeTarget = Math.max(0, Math.min(2, sp.getInt("gradeTarget", 2)));
@@ -56,7 +64,7 @@ final class DualPrefs {
     void save() {
         sp.edit().putInt("res", res).putInt("fps", fps).putBoolean("fullGate", fullGate).putInt("pipBorder", pipBorder)
                 .putBoolean("mirror", mirror).putBoolean("audio", audio).putInt("style", style).putBoolean("grid", gridLines)
-                .putBoolean("live", live).putInt("liveDur", liveDur).putBoolean("liveSep", liveSeparate).putBoolean("heif", heif).putInt("pipShape", pipShape)
+                .putBoolean("live", live).putInt("liveDur", liveDur).putBoolean("liveSep", liveSeparate).putBoolean("heif", heif).putInt("pipShape", pipShape).putInt("ratio", ratio).putInt("flash", flash).putInt("timerSec", timerSec).putBoolean("level", level)
                 .putBoolean("liveTimer", liveTimer).putBoolean("glass", glass).putInt("gradeTarget", gradeTarget).putFloat("pipW", pipW)
                 .putBoolean("fullRate", fullRate).putBoolean("dualOn", dualOn).putBoolean("singleFront", singleFront).apply();
     }
