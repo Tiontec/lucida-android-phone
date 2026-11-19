@@ -57,6 +57,11 @@ final class DualSettingsView extends FrameLayout {
             @Override public void on(boolean v) { p.liveTimer = v; p.save(); host.onChanged(false); } }));
         add(list, DualUi.toggleRow(c, "片门全开", "前后摄像头都用 4:3 最大规格，成品 3:4；帧率尽量保持所选值", p.fullGate, new DualUi.BoolCb() {
             @Override public void on(boolean v) { p.fullGate = v; p.save(); host.onChanged(true); } }));
+        final SettingsStore sst = new SettingsStore(p);
+        final String[] pfv = {"30", "60", "120"};
+        int pfi = 1; for (int k = 0; k < 3; k++) if (Integer.parseInt(pfv[k]) == sst.pipDragFps()) pfi = k;
+        add(list, DualUi.card(c, "小窗滑动帧率", DualUi.seg(c, new String[]{"30 帧", "60 帧", "120 帧"}, pfi, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("pipDragFps", pfv[i]); } })));
         add(list, DualUi.card(c, "小窗边框", DualUi.seg(c, new String[]{"无", "白色", "黑色"}, p.pipBorder, new DualUi.IntCb() {
             @Override public void on(int i) { p.pipBorder = i; p.save(); host.onChanged(false); } })));
         add(list, DualUi.toggleRow(c, "前置画面镜像", null, p.mirror, new DualUi.BoolCb() {

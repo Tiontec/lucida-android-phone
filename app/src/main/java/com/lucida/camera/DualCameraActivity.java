@@ -19,6 +19,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.MeteringRectangle;
 import android.hardware.camera2.params.StreamConfigurationMap;
@@ -231,6 +232,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     @Override
     protected void onPause() {
         if (recording) stopRecording();
+        if (screenFlashView != null) screenFlash(false);
+        flashBusy = false;
         closeCameras();
         NativeKv.of(this).flush();
         super.onPause();
@@ -565,7 +568,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int f = prefs.fps;
         if (effTier > DualPlan.startTier(prefs.res)) r = new String[]{"4K", "2.8K", "1080p", "720p"}[Math.max(0, Math.min(3, effTier))] + "↓";
         if (effFps < f) { f = effFps; r = r.endsWith("↓") ? r : r + "↓"; }
-        specPill.setText(r + " · " + f + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : ""));
+        specPill.setText(r + " · " + f + " · " + (prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG") + (prefs.fullGate ? " · 片门" : "") + new String[]{"", " · ⚡自动", " · ⚡开"}[prefs.flash]);
         specPill.requestLayout();
     }
 
@@ -649,6 +652,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                     @Override public boolean isDual() { return dual; }
                     @Override public String lastFail() { return lastDualFail; }
                     @Override public void setDual(boolean on) { setDualMode(on); }
+                    @Override public void openPalette() { closeOverlay(); setPalette(true); }
+                    @Override public void openRatio() { closeOverlay(); setSpecPanel(true); }
+                    @Override public int flashMode() { return prefs.flash; }
+                    @Override public int cycleFlash() { prefs.flash = (prefs.flash + 1) % 3; prefs.save(); syncSpecPill(); return prefs.flash; }
                 });
         overlay = v; root.addView(v, new FrameLayout.LayoutParams(-1, -1));
         v.requestApplyInsets();
@@ -777,7 +784,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             if (recording || clipping) { say("录像 / 实况拍摄中不能切换摄像头"); return; }
             if ((state.backIsMain ? frontId : backId) == null) { say("这台手机没有另一颗摄像头"); return; }
             state.backIsMain = !state.backIsMain; prefs.singleFront = !state.backIsMain; prefs.save();
-            if (torchOn) { torchOn = false; try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {} }
+            if (torchOn) { torchOn = false; try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, false); } catch (Throwable ignore) {} }
             syncDial(); syncButtons(); restart();
             return;
         }
@@ -1153,7 +1160,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (on) { forceMainLens(); zoomCur[0] = Math.max(zoomMin[0], Math.min(zoomMax[0], Math.max(1f, zoomCur[0]))); }     // 双摄时后置只用主镜头
         state.backIsMain = on ? true : !prefs.singleFront;
         if (gl != null) gl.single = !on;
-        if (torchOn) { torchOn = false; try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {} }
+        if (torchOn) { torchOn = false; try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, false); } catch (Throwable ignore) {} }
         degradeCount = 0; reqStage = 0; effFps = prefs.fps; effTier = DualPlan.startTier(prefs.res); syncSpecPill();
         clearFocusAll();
         syncButtons(); syncDial(); restart();
@@ -1394,7 +1401,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private CameraCaptureSession.CaptureCallback capCallback(final int cam) {
         if (capCb[cam] == null) capCb[cam] = new CameraCaptureSession.CaptureCallback() {
-            @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult res) { capCnt[cam]++; }
+            @Override public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest r, TotalCaptureResult res) {
+                capCnt[cam]++;
+                Integer iso = res.get(CaptureResult.SENSOR_SENSITIVITY); Long ex = res.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+                if (iso != null) lastIso[cam] = iso;
+                if (ex != null) lastExpNs[cam] = ex;
+            }
             @Override public void onCaptureFailed(CameraCaptureSession s, CaptureRequest r, CaptureFailure f) { capFail[cam]++; }
         };
         return capCb[cam];
@@ -1465,7 +1477,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void torch() {
         torchOn = !torchOn;
         if (!dual && !state.backIsMain) { torchOn = false; say("前置没有手电筒"); syncButtons(); return; }
-        try { cm.setTorchMode(backId, torchOn); say(torchOn ? "手电筒：开" : "手电筒：关"); }
+        try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, torchOn); say(torchOn ? "手电筒：开" : "手电筒：关"); }
         catch (Throwable e) { torchOn = false; say("手电筒不可用（双摄时系统常占用闪光灯）"); }
         syncButtons();
     }
@@ -1491,14 +1503,63 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void shutterTapped() {
-        if (!glReady || gl == null) return;
+        if (!glReady || gl == null || flashBusy) return;
         if (!videoMode) takePhoto();
         else if (recording) stopRecording();
         else if (clipping) say("还有实况在拍 / 合成，等它们完成再录像");
         else startRecording(false, 0);
     }
 
+    // ---------------------------------------------------------------- 闪光灯
+
+    private final int[] lastIso = new int[2];
+    private final long[] lastExpNs = new long[2];
+    private volatile boolean flashBusy;
+    private boolean flashLiveNoted;
+    private View screenFlashView;
+
+    /** 现在暗不暗（自动闪光灯用）：自动曝光已经把感光度拉高 / 快门拖慢 */
+    private boolean sceneDark(int cam) { return lastIso[cam] >= 800 || lastExpNs[cam] >= 1_000_000_000L / 24; }
+
+    private void screenFlash(boolean on) {
+        if (on) {
+            if (screenFlashView != null) return;
+            WindowManager.LayoutParams a = getWindow().getAttributes(); a.screenBrightness = 1f; getWindow().setAttributes(a);
+            screenFlashView = new View(this); screenFlashView.setBackgroundColor(Color.argb(245, 255, 255, 255));
+            root.addView(screenFlashView, new FrameLayout.LayoutParams(-1, -1));
+        } else {
+            if (screenFlashView == null) return;
+            root.removeView(screenFlashView); screenFlashView = null;
+            WindowManager.LayoutParams a = getWindow().getAttributes(); a.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE; getWindow().setAttributes(a);
+        }
+    }
+
+    /** 拍照：开了闪光灯（且需要）就先补光，等曝光适应再拍；否则直接拍。后置 = 手电筒补光，前置 = 屏幕补光 */
     private void takePhoto() {
+        int mode = prefs.flash;
+        if (mode == 0 || torchOn) { doTakePhoto(); return; }
+        if (prefs.live) {
+            if (!flashLiveNoted) { flashLiveNoted = true; say("拍实况时闪光灯不起作用，要补光请用下面的手电筒按钮"); }
+            doTakePhoto(); return;
+        }
+        final boolean useScreen = !dual && !state.backIsMain;
+        if (mode == 1 && !sceneDark(useScreen ? 1 : 0)) { doTakePhoto(); return; }
+        flashBusy = true;
+        if (!useScreen) {
+            try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, true); }
+            catch (Throwable e) { flashBusy = false; say("这台手机没法用手电筒补光"); AppLog.warn("闪光灯", "开手电筒失败：" + e); doTakePhoto(); return; }
+        } else screenFlash(true);
+        ui.postDelayed(new Runnable() { @Override public void run() {
+            doTakePhoto();
+            ui.postDelayed(new Runnable() { @Override public void run() {
+                if (useScreen) screenFlash(false);
+                else { try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, false); } catch (Throwable ignore) {} }
+                flashBusy = false;
+            } }, 250);
+        } }, useScreen ? 350 : 450);
+    }
+
+    private void doTakePhoto() {
         final boolean live = prefs.live;
         final boolean heif = prefs.heif && Build.VERSION.SDK_INT >= 34 && !live;
         final File f = newFile(heif ? "heic" : "jpg");
@@ -1735,7 +1796,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             boolean none; synchronized (items) { none = items.length() == 0; }
             if (failCode != null && none) { o.put("ok", false); o.put("code", failCode); o.put("error", failMsg); }
             else { o.put("ok", true); synchronized (items) { o.put("items", items); } }
-            if (torchOn) try { cm.setTorchMode(backId, false); } catch (Throwable ignore) {}
+            if (torchOn) try { cm.setTorchMode(mainBackId != null ? mainBackId : backId, false); } catch (Throwable ignore) {}
             Intent i = new Intent();
             i.putExtra("result", o.toString());
             setResult(RESULT_OK, i);
