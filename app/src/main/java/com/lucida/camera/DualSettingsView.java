@@ -74,6 +74,18 @@ final class DualSettingsView extends FrameLayout {
             @Override public void on(boolean v) { sst.set("sLiveStill", v ? "1" : "0"); } }));
         add(list, DualUi.toggleRow(c, "单摄 · 实况计时显示", null, sst.sLiveTimer(), new DualUi.BoolCb() {
             @Override public void on(boolean v) { sst.set("sLiveTimer", v ? "1" : "0"); host.onChanged(false); } }));
+        final String[] zsv = {"0", "1", "2", "3", "4"};
+        int zsi = Math.max(0, Math.min(4, sst.intValue("zoomSpeed")));
+        add(list, DualUi.card(c, "变焦速度（转盘滑一屏 1×→）", DualUi.seg(c, new String[]{"10×", "15×", "20×", "25×", "30×"}, zsi, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("zoomSpeed", zsv[i]); host.onChanged(false); } })));
+        final String[] uwv = {"off", "0.6", "0.5"};
+        int uwi = 2; for (int k = 0; k < 3; k++) if (uwv[k].equals(sst.get("uwScale"))) uwi = k;
+        add(list, DualUi.card(c, "超广角（重启相机后生效）", DualUi.seg(c, new String[]{"关闭", "0.6×", "0.5×"}, uwi, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("uwScale", uwv[i]); } })));
+        final String[] tlv = {"auto", "2", "2.5", "3", "4", "5"};
+        int tli = 0; for (int k = 0; k < 6; k++) if (tlv[k].equals(sst.get("teleScale"))) tli = k;
+        add(list, DualUi.card(c, "长焦镜头倍数（重启相机后生效）", DualUi.seg(c, new String[]{"自动", "2×", "2.5×", "3×", "4×", "5×"}, tli, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("teleScale", tlv[i]); } })));
         final String[] zrv = {"30", "50", "80", "100"};
         int zri = 0; for (int k = 0; k < 4; k++) if (Integer.parseInt(zrv[k]) == sst.zoomRange()) zri = k;
         add(list, DualUi.card(c, "变焦倍率上限（重启相机后生效）", DualUi.seg(c, new String[]{"30×", "50×", "80×", "100×"}, zri, new DualUi.IntCb() {

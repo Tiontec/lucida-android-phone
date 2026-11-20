@@ -183,7 +183,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("4", "1× → 30×　极速变焦", "手指横向滑动约 1/3 屏宽，变焦从 1× → 30×", "1× → 30×"));
                 List<String> notes = new ArrayList<String>();
                 notes.add("用于调节变焦转盘的跟手程度：档位越高，手指滑动同样距离，变焦变化越大。");
-                items.add(new SettingsRegistry.Item("zoomSpeed", "变焦速度", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "4", opts, notes, "", false, false, "slider.horizontal.3", 0, 0));
+                items.add(new SettingsRegistry.Item("zoomSpeed", "变焦速度", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "4", opts, notes, "", false, false, "slider.horizontal.3", 0, 0));
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
@@ -192,7 +192,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("0.5", "开启 0.5×", "标准超广角（iPhone 等，默认）", "0.5×"));
                 List<String> notes = new ArrayList<String>();
                 notes.add("不同手机的超广角倍数不同。选对后，变焦条、转盘的最小倍数和画面视野会与镜头一致；若设备自己的最小变焦更高，会自动取更高的值。");
-                items.add(new SettingsRegistry.Item("uwScale", "超广角倍数", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "0.5", opts, notes, "", false, false, "eye", 0, 0));
+                items.add(new SettingsRegistry.Item("uwScale", "超广角倍数", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "0.5", opts, notes, "", false, false, "eye", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("变焦", "", items));
         }
@@ -208,7 +208,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("5", "5×", "iPhone 15 Pro Max、16 Pro 系列", "5×"));
                 List<String> notes = new ArrayList<String>();
                 notes.add("手机有长焦镜头时，变焦到这个倍数，就会换成长焦镜头；再往上放大（例如 30×）是在长焦画面上继续数码放大，比主摄直接放大更清晰。自动识别不准时请在这里手动选。");
-                items.add(new SettingsRegistry.Item("teleScale", "长焦镜头倍数", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "auto", opts, notes, "", false, false, "scope", 0, 0));
+                items.add(new SettingsRegistry.Item("teleScale", "长焦镜头倍数", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "auto", opts, notes, "", false, false, "scope", 0, 0));
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();

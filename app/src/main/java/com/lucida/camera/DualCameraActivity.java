@@ -1148,8 +1148,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 else if (r >= 1.5f && px > bestTele) { bestTele = px; teleId = id; teleRatio = Math.round(r * 2f) / 2f; }
             }
         } catch (Throwable t) { rep.append("枚举出错：").append(t); }
+        SettingsStore ss = new SettingsStore(prefs);
+        String uws = ss.get("uwScale"), tls = ss.get("teleScale");
+        if ("off".equals(uws)) uwId = null;                                   // 设置「超广角倍数」= 关闭
+        else if (uwId != null && !uws.isEmpty()) { try { uwRatio = Math.max(uwRatio, Float.parseFloat(uws)); } catch (Exception ignore) {} }
+        if (teleId != null && !"auto".equals(tls) && !tls.isEmpty()) { try { teleRatio = Float.parseFloat(tls); } catch (Exception ignore) {} }
+        float zcap = Math.max(30, ss.zoomRange());
         if (uwId != null) extMin = Math.min(extMin, uwRatio);
-        if (teleId != null) extMax = Math.min(30f, Math.max(extMax, teleRatio * 4f));
+        if (teleId != null) extMax = Math.min(zcap, Math.max(extMax, teleRatio * 4f));
         lensReport = (uwId != null ? "超广角 " + uwId + "（" + uwRatio + "×）" : "无超广角") + "，" + (teleId != null ? "长焦 " + teleId + "（" + teleRatio + "×）" : "无长焦") + "。后置镜头：" + rep;
         AppLog.info("镜头", lensReport);
     }
@@ -1251,6 +1257,8 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int c = mainCam();
         boolean ext = c == 0 && lensExtOn();             // 单摄后置：转盘范围含超广角 / 长焦
         float lo = ext ? extMin : zoomMin[c], hi = ext ? extMax : zoomMax[c];
+        { int sp = new SettingsStore(prefs).intValue("zoomSpeed"); ZoomBar.spdMax = new double[]{10, 15, 20, 25, 30}[Math.max(0, Math.min(4, sp))]; }
+        if (c == 0 && lo < 0.98f) { String uws = new SettingsStore(prefs).get("uwScale"); if ("off".equals(uws)) lo = 1f; else { try { lo = Math.max(lo, Float.parseFloat(uws)); } catch (Exception ignore) {} } }
         zoomBar.setRange(lo, hi, lo < 0.98f);
         zoomBar.setZoom(zoomCur[c]);
         lastBackMain = state.backIsMain;

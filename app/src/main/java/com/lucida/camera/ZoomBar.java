@@ -27,7 +27,9 @@ final class ZoomBar extends View {
 
     private static final double[] STOPS = {.5, 1, 2, 3, 5, 10, 15, 20, 25, 30};
     private static final String[] LPRI = {"1", "10", "30", "5", "2", "3", "0.5", "0.6", "20", "15", "25"};
-    private static final double[] MAJ_BASE = {1, 2, 3, 5, 10, 15, 20, 25, 30};
+    private static final double[] MAJ_BASE = {1, 2, 3, 5, 10, 15, 20, 25, 30, 50, 80, 100};
+    /** 设置「变焦速度」：1× → 这个倍数走 34.7% 屏宽（10 / 15 / 20 / 25 / 30，默认 30） */
+    static double spdMax = 30;
 
     private Listener listener;
     private final float dens;
@@ -73,7 +75,7 @@ final class ZoomBar extends View {
     /** hwMin/hwMax = 当前这颗摄像头的真实倍数范围；hasUw = 有没有 <1× 的超广角可用。 */
     void setRange(float hwMin, float hwMax, boolean hasUw) {
         uw = hasUw && hwMin < 0.98f ? Math.max(0.5, hwMin) : 0;
-        zMax = Math.max(1.5, Math.min(30, hwMax));
+        zMax = Math.max(1.5, Math.min(100, hwMax));
         lmax = Math.log(zMax);
         buildTicks();
         raw = lt = lz = clampLn(lz);
@@ -263,7 +265,7 @@ final class ZoomBar extends View {
     protected void onDraw(Canvas c) {
         float W = getWidth() / dens, H = getHeight() / dens;
         if (W <= 0) return;
-        PXLN = Math.max(25, W * .347 / Math.log(30));
+        PXLN = Math.max(25, W * .347 / Math.log(spdMax));
         if (!sized) animateButtons(0f);
         c.save();
         c.scale(dens, dens);
