@@ -353,7 +353,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("mirror", "前置画面镜像", "", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_DUAL, SettingsRegistry.S_LIVE, "1", opts, notes, "", false, false, "", 0, 0));
+                items.add(new SettingsRegistry.Item("mirror", "前置画面镜像", "", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_DUAL, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, false, "", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }

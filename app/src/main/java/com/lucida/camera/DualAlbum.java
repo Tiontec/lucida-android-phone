@@ -310,17 +310,62 @@ final class DualAlbum extends FrameLayout {
             }
             ui.post(new Runnable() { @Override public void run() {
                 if (my != token[0]) return;                       // 已经翻页了
-                final VideoView vv = new VideoView(c);
-                vv.setBackgroundColor(Color.BLACK);
+                // 用 TextureView + MediaPlayer：以前的 VideoView 是独立的绘制层，个别机型上嵌在这种有动画 / 圆角的页面里只出声音、画面全黑
+                final LiveVideo vv = new LiveVideo(c);
                 holder.addView(vv, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
-                vv.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() { @Override public void onCompletion(android.media.MediaPlayer mp) { holder.removeView(vv); } });
-                vv.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() { @Override public boolean onError(android.media.MediaPlayer mp, int w, int x) {
+                vv.onDone = new Runnable() { @Override public void run() { holder.removeView(vv); } };
+                vv.onFail = new LiveVideo.Fail() { @Override public void on(int w, int x) {
                     AppLog.error("相册", "动态照片播放出错 what=" + w + " extra=" + x); holder.removeView(vv);
-                    android.widget.Toast.makeText(c, "动态照片播放失败（" + w + "/" + x + "）", android.widget.Toast.LENGTH_SHORT).show(); return true; } });
-                vv.setOnClickListener(new OnClickListener() { @Override public void onClick(View x) { vv.stopPlayback(); holder.removeView(vv); } });
-                vv.setVideoPath(clip.getAbsolutePath()); vv.start();
+                    android.widget.Toast.makeText(c, "动态照片播放失败（" + w + "/" + x + "）", android.widget.Toast.LENGTH_SHORT).show(); } };
+                vv.setOnClickListener(new OnClickListener() { @Override public void onClick(View x) { vv.release(); holder.removeView(vv); } });
+                vv.play(clip.getAbsolutePath());
             } });
         } }).start();
+    }
+
+    /** 播放动态照片里那段短视频：TextureView + MediaPlayer，等比放进容器里 */
+    static final class LiveVideo extends android.view.TextureView implements android.view.TextureView.SurfaceTextureListener {
+        interface Fail { void on(int what, int extra); }
+        Runnable onDone; Fail onFail;
+        private android.media.MediaPlayer mp;
+        private String path;
+        private int vw, vh;
+        LiveVideo(Context c) { super(c); setSurfaceTextureListener(this); setOpaque(true); }
+        void play(String p) { path = p; if (isAvailable()) start(getSurfaceTexture()); }
+        void release() {
+            if (mp != null) { try { mp.stop(); } catch (Throwable ignore) {} try { mp.release(); } catch (Throwable ignore) {} mp = null; }
+        }
+        private void start(android.graphics.SurfaceTexture st) {
+            if (path == null || mp != null) return;
+            try {
+                mp = new android.media.MediaPlayer();
+                mp.setDataSource(path);
+                mp.setSurface(new android.view.Surface(st));
+                mp.setOnVideoSizeChangedListener(new android.media.MediaPlayer.OnVideoSizeChangedListener() {
+                    @Override public void onVideoSizeChanged(android.media.MediaPlayer m, int w, int h) { vw = w; vh = h; fit(); } });
+                mp.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
+                    @Override public void onPrepared(android.media.MediaPlayer m) { vw = m.getVideoWidth(); vh = m.getVideoHeight(); fit(); m.start(); } });
+                mp.setOnCompletionListener(new android.media.MediaPlayer.OnCompletionListener() {
+                    @Override public void onCompletion(android.media.MediaPlayer m) { release(); if (onDone != null) onDone.run(); } });
+                mp.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
+                    @Override public boolean onError(android.media.MediaPlayer m, int w, int x) { release(); if (onFail != null) onFail.on(w, x); return true; } });
+                mp.prepareAsync();
+            } catch (Throwable e) { release(); if (onFail != null) onFail.on(-1, -1); }
+        }
+        /** 视频等比放大到刚好放进容器（和上面那张照片一样的比例，重合） */
+        private void fit() {
+            int W = getWidth(), H = getHeight();
+            if (W <= 0 || H <= 0 || vw <= 0 || vh <= 0) return;
+            float s = Math.min((float) W / vw, (float) H / vh);
+            float w = vw * s, h = vh * s;
+            Matrix m = new Matrix();
+            m.setScale(w / W, h / H, W / 2f, H / 2f);
+            setTransform(m);
+        }
+        @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st, int w, int h) { start(st); }
+        @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st, int w, int h) { fit(); }
+        @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st) { release(); return true; }
+        @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st) {}
     }
 
     /** 可双指缩放 / 拖动 / 双击放大的图片；没放大时左右快速滑动 = 翻页 */
