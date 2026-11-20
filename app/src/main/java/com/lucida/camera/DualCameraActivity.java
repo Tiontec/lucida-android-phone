@@ -693,7 +693,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     private void toggleLive() {
         prefs.live = !prefs.live; prefs.save(); syncButtons();
-        say(prefs.live ? "实况已开启（动态照片 " + prefs.liveDur + " 秒，从按下快门开始，" + (prefs.audio ? "带声音" : "无声音（录像声音开关已关）") + "）" : "实况已关闭");
+        say(prefs.live ? "实况已开启（动态照片 " + liveSec() + " 秒，从按下快门开始，" + (prefs.audio ? "带声音" : "无声音（录像声音开关已关）") + "）" : "实况已关闭");
     }
 
     private void openSettings() {
@@ -1084,7 +1084,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 hi = m == null ? 1f : m; lo = 1f;
             }
             zoomMin[cam] = Math.max(0.1f, lo);
-            zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, 30f));
+            zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, (float) Math.max(30, new SettingsStore(prefs).zoomRange())));
             if (initZoom) zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
             Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
             senOri[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
@@ -1742,7 +1742,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         final LiveTask task;
         if (live) {
             if (activeLive() >= MAX_LIVE) { say("同时拍摄 / 合成的实况已满 " + MAX_LIVE + " 张，请稍等"); return; }
-            task = new LiveTask(++liveSeq, prefs.liveDur, f);
+            task = new LiveTask(++liveSeq, liveSec(), f);
             liveTasks.add(task); clipping = true; addLiveRow(task);
         } else task = null;
         final View flash = new View(this); flash.setBackgroundColor(Color.WHITE);
@@ -1766,6 +1766,10 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     // ---------------------------------------------------------------- 实况（动态照片）连拍
 
+    /** 实况的时长：双摄用「双摄设置」里的，单摄用「拍照与实况」里的 */
+    private int liveSec() { if (dual) return prefs.liveDur; int d = new SettingsStore(prefs).sLiveDur(); return d > 0 ? d : 3; }
+    private boolean liveTimerOn() { return dual ? prefs.liveTimer : new SettingsStore(prefs).sLiveTimer(); }
+
     private int activeLive() { int n = 0; for (LiveTask t : liveTasks) if (t.phase < 2) n++; return n; }
 
     /** GL 线程：照片已经拍好，马上开这一张实况的短片编码（和别的实况同时进行，互不等待） */
@@ -1776,6 +1780,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             Surface in = r.start();
             t.rec = r;
             t.enc = gl.addLiveEncoder(in, System.nanoTime());
+            if (!dual) { int lf = Math.max(15, Math.min(60, new SettingsStore(prefs).sLiveFps())); t.enc.minGapNs = (long) (1_000_000_000L / lf * 0.9); }
             ui.post(new Runnable() { @Override public void run() {
                 t.t0Ns = System.nanoTime();
                 ui.postDelayed(new Runnable() { @Override public void run() { endLiveClip(t); } }, t.total * 1000L);
@@ -1797,6 +1802,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             final boolean ok = t.rec != null && t.rec.stop();
             new Thread(new Runnable() { @Override public void run() {
                 final Runnable fine = new Runnable() { @Override public void run() { ui.post(new Runnable() { @Override public void run() { liveEnded(t, true, "实况照片已存入系统相册"); } }); } };
+                if (ok && !dual && new SettingsStore(prefs).sLiveStill()) {       // 单摄「实况 + 静态照片」：多存一张同一瞬间的静态照片
+                    try { File still = newFile("jpg"); try (java.io.InputStream in = new java.io.FileInputStream(t.photo); FileOutputStream out2 = new FileOutputStream(still)) { byte[] buf = new byte[65536]; int n; while ((n = in.read(buf)) > 0) out2.write(buf, 0, n); } store(still, false, null); } catch (Throwable ignore) {}
+                }
                 if (ok && !prefs.liveSeparate) {
                     File out = newFile("jpg");
                     if (MotionPhoto.embed(t.photo, t.clip, out, 0)) { t.photo.delete(); t.clip.delete(); store(out, false, fine); }
@@ -1832,7 +1840,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     }
 
     private void refreshLiveRows() {
-        liveStack.setVisibility(prefs.liveTimer && !liveTasks.isEmpty() ? View.VISIBLE : View.GONE);
+        liveStack.setVisibility(liveTimerOn() && !liveTasks.isEmpty() ? View.VISIBLE : View.GONE);
         for (LiveTask t : liveTasks) {
             if (t.row == null) continue;
             int bg; String tx;
@@ -1855,7 +1863,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         t.phase = ok ? 2 : 3; if (!ok) t.note = msg;
         clipping = activeLive() > 0;
         refreshLiveRows();
-        if (!prefs.liveTimer && ok) say(msg);
+        if (!liveTimerOn() && ok) say(msg);
         if (activeLive() > 0) return;
         final int tok = ++liveHideToken;
         ui.postDelayed(new Runnable() { @Override public void run() {

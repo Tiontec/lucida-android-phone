@@ -62,6 +62,22 @@ final class DualSettingsView extends FrameLayout {
         int pfi = 1; for (int k = 0; k < 3; k++) if (Integer.parseInt(pfv[k]) == sst.pipDragFps()) pfi = k;
         add(list, DualUi.card(c, "小窗滑动帧率", DualUi.seg(c, new String[]{"30 帧", "60 帧", "120 帧"}, pfi, new DualUi.IntCb() {
             @Override public void on(int i) { sst.set("pipDragFps", pfv[i]); } })));
+        // 单摄（只开一颗摄像头）的实况设置，和上面双摄的各自独立
+        final String[] sfv = {"15", "30", "60"}, sdv = {"3", "5", "6", "8"};
+        int sfi = 1; for (int k = 0; k < 3; k++) if (Integer.parseInt(sfv[k]) == sst.sLiveFps()) sfi = k;
+        int sdi = 0; for (int k = 0; k < 4; k++) if (Integer.parseInt(sdv[k]) == sst.sLiveDur()) sdi = k;
+        add(list, DualUi.card(c, "单摄 · 实况帧率", DualUi.seg(c, new String[]{"15 帧", "30 帧", "60 帧"}, sfi, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("sLiveFps", sfv[i]); } })));
+        add(list, DualUi.card(c, "单摄 · 实况时长", DualUi.seg(c, new String[]{"3 秒", "5 秒", "6 秒", "8 秒"}, sdi, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("sLiveDur", sdv[i]); } })));
+        add(list, DualUi.toggleRow(c, "单摄 · 实况 + 静态照片", "每次实况再多存一张同一瞬间的静态照片", sst.sLiveStill(), new DualUi.BoolCb() {
+            @Override public void on(boolean v) { sst.set("sLiveStill", v ? "1" : "0"); } }));
+        add(list, DualUi.toggleRow(c, "单摄 · 实况计时显示", null, sst.sLiveTimer(), new DualUi.BoolCb() {
+            @Override public void on(boolean v) { sst.set("sLiveTimer", v ? "1" : "0"); host.onChanged(false); } }));
+        final String[] zrv = {"30", "50", "80", "100"};
+        int zri = 0; for (int k = 0; k < 4; k++) if (Integer.parseInt(zrv[k]) == sst.zoomRange()) zri = k;
+        add(list, DualUi.card(c, "变焦倍率上限（重启相机后生效）", DualUi.seg(c, new String[]{"30×", "50×", "80×", "100×"}, zri, new DualUi.IntCb() {
+            @Override public void on(int i) { sst.set("zoomRange", zrv[i]); } })));
         add(list, DualUi.card(c, "小窗边框", DualUi.seg(c, new String[]{"无", "白色", "黑色"}, p.pipBorder, new DualUi.IntCb() {
             @Override public void on(int i) { p.pipBorder = i; p.save(); host.onChanged(false); } })));
         add(list, DualUi.toggleRow(c, "前置画面镜像", null, p.mirror, new DualUi.BoolCb() {

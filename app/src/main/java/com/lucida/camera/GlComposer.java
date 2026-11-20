@@ -183,7 +183,7 @@ final class GlComposer {
     boolean hasEncoder() { return encSurf != EGL14.EGL_NO_SURFACE; }
 
     /** 实况短片的编码输出（可以同时有好几路，连拍用）；只能在 GL 线程上增删 / 绘制 */
-    static final class Enc { EGLSurface surf = EGL14.EGL_NO_SURFACE; long baseNs; }
+    static final class Enc { EGLSurface surf = EGL14.EGL_NO_SURFACE; long baseNs; long minGapNs, lastNs; }
     private final java.util.ArrayList<Enc> liveEncs = new java.util.ArrayList<Enc>();
 
     Enc addLiveEncoder(Surface s, long baseNs) {
@@ -204,6 +204,8 @@ final class GlComposer {
         long now = System.nanoTime();
         for (int i = 0; i < liveEncs.size(); i++) {
             Enc e = liveEncs.get(i);
+            if (e.minGapNs > 0 && e.lastNs != 0 && now - e.lastNs < e.minGapNs) continue;     // 实况帧率低于取景帧率：隔帧取
+            e.lastNs = now;
             EGL14.eglMakeCurrent(dpy, e.surf, e.surf, ctx);
             drawScene(0, 0, w, h);
             EGLExt.eglPresentationTimeANDROID(dpy, e.surf, now - e.baseNs);

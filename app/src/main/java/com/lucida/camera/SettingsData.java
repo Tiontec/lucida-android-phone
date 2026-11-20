@@ -92,7 +92,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("30", "30 帧（推荐）", "流畅，内存适中", "30 帧"));
                 opts.add(new SettingsRegistry.Option("60", "60 帧", "最顺滑；每帧像素会比 30 帧略小", "60 帧"));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("sLiveFps", "实况帧率", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_SOON, "30", opts, notes, "", true, false, "speedometer", 0, 0));
+                items.add(new SettingsRegistry.Item("sLiveFps", "实况帧率", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "30", opts, notes, "", true, false, "speedometer", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("实况帧率", "只影响之后拍的实况，也决定编辑后实况视频重新生成时的帧率。已拍好的 15 帧实况无法凭空补帧。", items));
         }
@@ -105,7 +105,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("6", "6 秒", "从按下快门开始录 6 秒", "6 秒"));
                 opts.add(new SettingsRegistry.Option("8", "8 秒", "从按下快门开始录 8 秒", "8 秒"));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("sLiveDur", "实况时长", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_SOON, "3", opts, notes, "", true, false, "timer", 0, 0));
+                items.add(new SettingsRegistry.Item("sLiveDur", "实况时长", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "3", opts, notes, "", true, false, "timer", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("实况时长", "只影响之后拍的实况。安卓的动态照片从按下快门开始录，没有快门前 1.5 秒；时间越长，合成越久。", items));
         }
@@ -117,7 +117,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("1", "照片 + 视频分开", "动态照片之外，再单独存一份静态照片和一段视频", "照片 + 视频分开"));
                 List<String> notes = new ArrayList<String>();
                 notes.add("安卓没有苹果那种实况照片：动态照片 = 一张 JPEG 里内嵌从按下快门开始的短视频，Google 相册等支持动态照片的相册可播放。");
-                items.add(new SettingsRegistry.Item("sLiveStill", "实况保存方式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_SOON, "0", opts, notes, "", false, false, "livephoto", 0, 0));
+                items.add(new SettingsRegistry.Item("sLiveStill", "实况保存方式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, false, "livephoto", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("实况保存", "", items));
         }
@@ -126,7 +126,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("sLiveTimer", "实况计时显示", "拍实况时在取景框左上角显示已经拍到第几秒、有没有拍完", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_SOON, "1", opts, notes, "", false, false, "clock", 0, 0));
+                items.add(new SettingsRegistry.Item("sLiveTimer", "实况计时显示", "拍实况时在取景框左上角显示已经拍到第几秒、有没有拍完", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "1", opts, notes, "", false, false, "clock", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }
@@ -245,7 +245,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("80", "扩充到 80×", "画质会下降，但变焦动作保持顺滑", "扩充到 80×"));
                 opts.add(new SettingsRegistry.Option("100", "扩充到 100×", "最大范围，数码放大最多", "扩充到 100×"));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("zoomRange", "变焦倍率扩充", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "30", opts, notes, "", true, false, "plus.magnifyingglass", 0, 0));
+                items.add(new SettingsRegistry.Item("zoomRange", "变焦倍率扩充", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "30", opts, notes, "", true, false, "plus.magnifyingglass", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("变焦倍率扩充", "选择转盘、双指和滚轮变焦的最高倍数。超过镜头本身的部分是数码放大。", items));
         }
