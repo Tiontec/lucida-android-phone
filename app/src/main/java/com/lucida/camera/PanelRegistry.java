@@ -18,6 +18,15 @@ final class PanelRegistry {
     }
 
     /** 面板按钮（3 列，从左到右、从上到下） */
+    /** 按用户排好的顺序返回按钮：存档里有的按存档排，新增的追加在末尾，已不存在的丢掉 */
+    static Item[] ordered(String saved) {
+        if (saved == null || saved.isEmpty()) return ITEMS;
+        java.util.ArrayList<Item> out = new java.util.ArrayList<Item>();
+        for (String id : saved.split(",")) for (Item it : ITEMS) if (it.id.equals(id) && !out.contains(it)) out.add(it);
+        for (Item it : ITEMS) if (!out.contains(it)) out.add(it);
+        return out.toArray(new Item[0]);
+    }
+
     static final Item[] ITEMS = {
         new Item("filter", "滤镜影调", PanelGlyph.FILTER, ST_SOON, A_NONE),
         new Item("flash", "闪光灯", PanelGlyph.BOLT, ST_ENABLED, A_CYCLE_FLASH),

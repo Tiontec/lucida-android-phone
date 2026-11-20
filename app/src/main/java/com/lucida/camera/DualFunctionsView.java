@@ -51,6 +51,12 @@ final class DualFunctionsView extends FrameLayout {
     private final DragSheet sheet;
     private final FrameLayout content;
     private final PanelTile[] tiles;
+    private final DualPrefs prefs;
+    private boolean editing;
+    private PanelTile dragTile;
+    private TextView editBtn;
+    private int colW;
+    private float extraPitch;
     private final TextView toast;
 
     private final int side, headerH, minPitch, circle, tileH, gap;
@@ -68,14 +74,14 @@ final class DualFunctionsView extends FrameLayout {
 
     DualFunctionsView(final Context c, DualPrefs prefs, Runnable onClose, Runnable onSettings, Host host) {
         super(c);
-        this.onClose = onClose; this.onSettings = onSettings; this.host = host;
+        this.onClose = onClose; this.onSettings = onSettings; this.host = host; this.prefs = prefs;
         side = DualUi.dp(c, 12); headerH = DualUi.dp(c, 44); minPitch = DualUi.dp(c, 112); circle = DualUi.dp(c, 68); gap = DualUi.dp(c, 8);
         tileH = circle + DualUi.dp(c, 30);
         setClickable(true);
 
         dim = new View(c);
         dim.setBackgroundColor(Color.BLACK); dim.setAlpha(0f);
-        dim.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { dismiss(null); } });
+        dim.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { if (editing) finishEditing(); else dismiss(null); } });
         addView(dim, new FrameLayout.LayoutParams(-1, -1));
 
         sheet = new DragSheet(c);
@@ -97,24 +103,35 @@ final class DualFunctionsView extends FrameLayout {
         glp.topMargin = DualUi.dp(c, 8);
         sheet.addView(grabber, glp);
 
-        DualIcon gear = new DualIcon(c, DualIcon.GEAR);
-        gear.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { dismiss(new Runnable() { @Override public void run() { DualFunctionsView.this.onSettings.run(); } }); } });
-        FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(DualUi.dp(c, 36), DualUi.dp(c, 36), Gravity.TOP | Gravity.RIGHT);
-        gp.topMargin = DualUi.dp(c, 4); gp.rightMargin = DualUi.dp(c, 14);
-        sheet.addView(gear, gp);
+        // 右上角「编辑」⇄「完成」：编辑时长按拖动图标排序，点「完成」保存顺序
+        editBtn = DualUi.label(c, "编辑", 15, Color.WHITE);
+        editBtn.setGravity(Gravity.CENTER); editBtn.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        editBtn.setBackground(DualUi.round(0x29FFFFFF, 16, c));
+        editBtn.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { if (editing) finishEditing(); else startEditing(); } });
+        FrameLayout.LayoutParams gp = new FrameLayout.LayoutParams(DualUi.dp(c, 64), DualUi.dp(c, 32), Gravity.TOP | Gravity.RIGHT);
+        gp.topMargin = DualUi.dp(c, 6); gp.rightMargin = DualUi.dp(c, 14);
+        sheet.addView(editBtn, gp);
 
         content = new FrameLayout(c);
         FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(-1, -1);
         clp.topMargin = headerH;
         sheet.addView(content, clp);
 
-        tiles = new PanelTile[PanelRegistry.ITEMS.length];
+        final PanelRegistry.Item[] order = PanelRegistry.ordered(prefs.panelOrder);
+        tiles = new PanelTile[order.length];
         for (int i = 0; i < tiles.length; i++) {
-            final PanelRegistry.Item it = PanelRegistry.ITEMS[i];
+            final PanelRegistry.Item it = order[i];
             final PanelTile t = new PanelTile(c, it);
-            t.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { perform(it, t); } });
+            t.home = i;
+            t.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { if (!editing) perform(it, t); } });
+            t.setOnLongClickListener(new OnLongClickListener() { @Override public boolean onLongClick(View v) {
+                if (!editing) return false;
+                dragTile = t; t.animate().cancel(); t.setRotation(0f); t.bringToFront();
+                t.animate().scaleX(1.12f).scaleY(1.12f).alpha(.92f).setDuration(160).start();
+                try { t.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); } catch (Throwable ignore) {}
+                return true; } });
             FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(DualUi.dp(c, 100), tileH);
-            tp.topMargin = gap + (i / 3) * minPitch;
+            tp.topMargin = gap + (i / 3) * minPitch;       // 出厂位置；之后靠 translationX / Y 挪到当前位置
             content.addView(t, tp);
             tiles[i] = t;
             if (it.action == PanelRegistry.A_TOGGLE_DUAL) t.glyph.setActive(host.isDual());
@@ -146,10 +163,10 @@ final class DualFunctionsView extends FrameLayout {
         bottomMargin = Math.max(bottomInset, DualUi.dp(c, 4)) + DualUi.dp(c, 8);
         hMax = Math.max(DualUi.dp(c, 320), getHeight() - (topInset + DualUi.dp(c, 52)) - bottomMargin);
         hMin = Math.min(DualUi.dp(c, 300), hMax - DualUi.dp(c, 40));
-        int colW = (getWidth() - side * 2) / 3;
+        colW = (getWidth() - side * 2) / 3;
         for (int i = 0; i < tiles.length; i++) {
             FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) tiles[i].getLayoutParams();
-            int w = Math.max(1, colW), left = colW * (i % 3);
+            int w = Math.max(1, colW), left = colW * (tiles[i].home % 3);
             if (tp.width != w || tp.leftMargin != left) { tp.width = w; tp.leftMargin = left; tiles[i].setLayoutParams(tp); }
         }
     }
@@ -179,9 +196,74 @@ final class DualFunctionsView extends FrameLayout {
         float span = Math.max(1f, hMax - hMin);
         float t = Math.max(0f, Math.min(1f, (curH - hMin) / span));
         float pMax = Math.max(minPitch, (hMax - headerH - DualUi.dp(getContext(), 20)) / 4f);
-        float extra = (pMax - minPitch) * t;
-        for (int i = 0; i < tiles.length; i++) tiles[i].setTranslationY((i / 3) * extra);
+        extraPitch = (pMax - minPitch) * t;
+        for (int i = 0; i < tiles.length; i++) if (tiles[i] != dragTile) placeTile(tiles[i], i, false);
         dim.setAlpha(0.32f * t);
+    }
+
+    /** 把按钮挪到第 slot 个位置（相对它出厂位置的偏移） */
+    private void placeTile(PanelTile t, int slot, boolean animate) {
+        float tx = (slot % 3 - t.home % 3) * (float) colW;
+        float ty = (slot / 3 - t.home / 3) * (float) minPitch + (slot / 3) * extraPitch;
+        if (animate) t.animate().translationX(tx).translationY(ty).setDuration(260).setInterpolator(new OvershootInterpolator(1.0f)).start();
+        else { t.animate().cancel(); t.setTranslationX(tx); t.setTranslationY(ty); }
+    }
+
+    // ───────────── 编辑排序 ─────────────
+
+    private void startEditing() {
+        editing = true; editBtn.setText("完成"); editBtn.setTextColor(DualUi.YELLOW);
+        for (int i = 0; i < tiles.length; i++) wiggle(tiles[i], i);
+        if (curH < hMax - 1) animateTo(hMax, 320, null);
+    }
+
+    private void finishEditing() {
+        editing = false; editBtn.setText("编辑"); editBtn.setTextColor(Color.WHITE);
+        StringBuilder sb = new StringBuilder();
+        for (PanelTile t : tiles) {
+            if (t.wig != null) { t.wig.cancel(); t.wig = null; }
+            t.setRotation(0f);
+            if (sb.length() > 0) sb.append(','); sb.append(t.item.id);
+        }
+        prefs.panelOrder = sb.toString(); prefs.save();
+    }
+
+    private void wiggle(PanelTile t, int i) {
+        if (t.wig != null) t.wig.cancel();
+        android.animation.ObjectAnimator a = android.animation.ObjectAnimator.ofFloat(t, View.ROTATION, -2f, 2f);
+        a.setDuration(130 + 12 * (i % 3)); a.setRepeatMode(ValueAnimator.REVERSE); a.setRepeatCount(ValueAnimator.INFINITE);
+        t.wig = a; a.start();
+    }
+
+    /** 拖动中：手指在 content 里的坐标；跨过别的格子就换位 */
+    private void dragMove(float x, float y) {
+        PanelTile t = dragTile; if (t == null) return;
+        int cur = -1; for (int i = 0; i < tiles.length; i++) if (tiles[i] == t) cur = i;
+        // 跟手：直接把按钮中心放到手指下
+        float baseX = colW * (t.home % 3) + colW / 2f, baseY = gap + (t.home / 3) * minPitch + tileH / 2f;
+        t.setTranslationX(x - baseX); t.setTranslationY(y - baseY);
+        int col = Math.max(0, Math.min(2, (int) (x / Math.max(1, colW))));
+        float pitch = minPitch + extraPitch;
+        int row = Math.max(0, (int) ((y - gap) / Math.max(1f, pitch)));
+        int idx = Math.min(tiles.length - 1, row * 3 + col);
+        if (cur >= 0 && idx != cur) {
+            PanelTile[] copy = tiles.clone();
+            PanelTile moved = copy[cur];
+            if (idx > cur) for (int i = cur; i < idx; i++) copy[i] = copy[i + 1];
+            else for (int i = cur; i > idx; i--) copy[i] = copy[i - 1];
+            copy[idx] = moved;
+            System.arraycopy(copy, 0, tiles, 0, tiles.length);
+            for (int i = 0; i < tiles.length; i++) if (tiles[i] != t) placeTile(tiles[i], i, true);
+        }
+    }
+
+    private void dragEnd() {
+        PanelTile t = dragTile; if (t == null) return;
+        dragTile = null;
+        int slot = 0; for (int i = 0; i < tiles.length; i++) if (tiles[i] == t) slot = i;
+        t.animate().scaleX(1f).scaleY(1f).alpha(t.item.state == PanelRegistry.ST_SOON ? .38f : 1f).setDuration(200).start();
+        placeTile(t, slot, true);
+        wiggle(t, 1);
     }
 
     // ───────────── 动画 ─────────────
@@ -299,6 +381,8 @@ final class DualFunctionsView extends FrameLayout {
     private static final class PanelTile extends FrameLayout {
         final PanelRegistry.Item item;
         final PanelGlyph glyph;
+        int home;
+        android.animation.ObjectAnimator wig;
         PanelTile(Context c, PanelRegistry.Item item) {
             super(c);
             this.item = item;
@@ -338,6 +422,8 @@ final class DualFunctionsView extends FrameLayout {
 
         @Override public boolean onInterceptTouchEvent(MotionEvent ev) {
             if (closing) return false;
+            if (dragTile != null) return true;                    // 拖动排序中：后面的触摸都归面板处理
+            if (editing) return false;                            // 编辑中不拖动面板高度
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: begin(ev); break;
                 case MotionEvent.ACTION_MOVE:
@@ -351,6 +437,15 @@ final class DualFunctionsView extends FrameLayout {
 
         @Override public boolean onTouchEvent(MotionEvent ev) {
             if (closing) return true;
+            if (dragTile != null) {
+                int a = ev.getActionMasked();
+                if (a == MotionEvent.ACTION_MOVE) {
+                    int[] cl = new int[2], sl = new int[2]; content.getLocationOnScreen(cl);
+                    dragMove(ev.getRawX() - cl[0], ev.getRawY() - cl[1]);
+                } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) dragEnd();
+                return true;
+            }
+            if (editing) return true;
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN: begin(ev); return true;
                 case MotionEvent.ACTION_MOVE: {

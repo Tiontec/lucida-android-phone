@@ -27,6 +27,52 @@ final class DualIcon extends View {
         p.setStyle(Paint.Style.STROKE); p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
     }
 
+    // ---- 液态按压效果：按下有一团光跟着手指，拖动时朝手指方向拉伸，松手弹回
+    private float glowX, glowY, glowA;
+    private boolean touching;
+    private android.graphics.RadialGradient glowShader;
+    private final android.graphics.Matrix glowM = new android.graphics.Matrix();
+    private final Paint glowP = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    @Override public boolean onTouchEvent(android.view.MotionEvent e) {
+        if (!round || !isEnabled()) return super.onTouchEvent(e);
+        int a = e.getActionMasked();
+        float W = Math.max(1, getWidth()), H = Math.max(1, getHeight());
+        if (a == android.view.MotionEvent.ACTION_DOWN || a == android.view.MotionEvent.ACTION_MOVE) {
+            glowX = e.getX(); glowY = e.getY();
+            float dx = Math.max(-1.2f, Math.min(1.2f, (glowX - W / 2) / W)), dy = Math.max(-1.2f, Math.min(1.2f, (glowY - H / 2) / H));
+            animate().cancel();
+            setScaleX(1.06f + Math.abs(dx) * 0.3f); setScaleY(1.06f + Math.abs(dy) * 0.3f);
+            setTranslationX(dx * W * 0.16f); setTranslationY(dy * H * 0.16f);
+            if (a == android.view.MotionEvent.ACTION_DOWN) { touching = true; glowA = 0f; fadeGlow(1f, 170); }
+            invalidate();
+        } else if (a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL) {
+            touching = false; fadeGlow(0f, 320);
+            animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(520)
+                    .setInterpolator(new android.view.animation.OvershootInterpolator(4f)).start();
+        }
+        return super.onTouchEvent(e);
+    }
+
+    private void fadeGlow(float to, int ms) {
+        android.animation.ValueAnimator va = android.animation.ValueAnimator.ofFloat(glowA, to);
+        va.setDuration(ms);
+        va.addUpdateListener(new android.animation.ValueAnimator.AnimatorUpdateListener() { @Override public void onAnimationUpdate(android.animation.ValueAnimator an) {
+            glowA = (Float) an.getAnimatedValue(); invalidate(); } });
+        va.start();
+    }
+
+    private void drawGlow(Canvas c, float cx, float cy, float s) {
+        if (glowA <= 0.01f) return;
+        if (glowShader == null) glowShader = new android.graphics.RadialGradient(0f, 0f, 1f, new int[]{0x9EFFFFFF, 0x2EFFFFFF, 0x00FFFFFF}, new float[]{0f, 0.45f, 1f}, android.graphics.Shader.TileMode.CLAMP);
+        float rad = s * 0.78f;
+        glowM.reset(); glowM.setScale(rad, rad); glowM.postTranslate(glowX, glowY);
+        glowShader.setLocalMatrix(glowM);
+        glowP.setShader(glowShader); glowP.setAlpha((int) (255 * Math.min(1f, glowA)));
+        c.save(); path.reset(); path.addCircle(cx, cy, s / 2, Path.Direction.CW); c.clipPath(path);
+        c.drawCircle(glowX, glowY, rad, glowP); c.restore();
+    }
+
     void set(boolean on) { this.on = on; invalidate(); }
     void setKind(int k) { kind = k; invalidate(); }
 
@@ -41,6 +87,7 @@ final class DualIcon extends View {
                 c.drawCircle(cx, cy, s / 2 - bg.getStrokeWidth() / 2, bg); bg.setStyle(Paint.Style.FILL);
             } else { bg.setColor(bgColor); c.drawCircle(cx, cy, s / 2, bg); }
         }
+        if (round && bgColor != 0) drawGlow(c, cx, cy, s);
         int col = on ? tintOn : tintOff;
         if (!isEnabled()) col = (col & 0x00FFFFFF) | 0x66000000;
         p.setColor(col); p.setStrokeWidth(Math.max(2f, s * 0.055f));
