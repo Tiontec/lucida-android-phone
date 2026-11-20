@@ -16,6 +16,9 @@ final class DualUi {
     static final int YELLOW = 0xFFFFD60A;
     /** 毛玻璃界面（半透明 + 高光描边）；安卓没有系统液态玻璃，这是用绘制模拟的 */
     static boolean glass = false;
+    /** 玻璃样式（设置 → 界面风格）：frosted = 毛玻璃；liquid = 液态玻璃（自绘折射，小控件拿取景画面做透镜） */
+    static String glassStyle = "liquid";
+    static boolean liquid() { return glass && !"frosted".equals(glassStyle); }
 
     static int dp(Context c, float v) { return Math.round(v * c.getResources().getDisplayMetrics().density); }
 
@@ -29,6 +32,29 @@ final class DualUi {
         GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0x47FFFFFF, 0x14FFFFFF, 0x2EFFFFFF});
         g.setCornerRadius(dp(c, rDp)); g.setStroke(Math.max(1, dp(c, 1)), 0x73FFFFFF);
         return g;
+    }
+
+    /** 给「host」这个控件用的玻璃底：液态玻璃开着时是折射底（取景还没出画时它自己退回毛玻璃），否则同 surface() */
+    static android.graphics.drawable.Drawable surfaceFor(View host, int flat, float rDp, Context c) {
+        if (!liquid()) return surface(flat, rDp, c);
+        return new RefractBg(host, surface(flat, rDp, c), dp(c, rDp));
+    }
+
+    /** 折射底：能折射就画折射，不能就画 fallback（普通毛玻璃） */
+    static final class RefractBg extends android.graphics.drawable.Drawable {
+        private final View host; private final android.graphics.drawable.Drawable fb; private final float r;
+        RefractBg(View host, android.graphics.drawable.Drawable fb, float r) { this.host = host; this.fb = fb; this.r = r; }
+        @Override public void draw(android.graphics.Canvas c) {
+            android.graphics.Rect b = getBounds();
+            fb.setBounds(b);
+            c.save(); c.translate(b.left, b.top);
+            boolean ok = GlassRefract.I.draw(c, host, b.width(), b.height(), Math.min(r, Math.min(b.width(), b.height()) / 2f));
+            c.restore();
+            if (!ok) fb.draw(c);
+        }
+        @Override public void setAlpha(int a) { fb.setAlpha(a); }
+        @Override public void setColorFilter(android.graphics.ColorFilter f) { fb.setColorFilter(f); }
+        @Override public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
     }
 
     /** 分段选择器：返回容器；选中项黄色底、黑字 */

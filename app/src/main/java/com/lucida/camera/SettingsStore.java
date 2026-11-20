@@ -12,6 +12,8 @@ final class SettingsStore {
     private final DualPrefs p;
     SettingsStore(DualPrefs p) { this.p = p; }
 
+    private static final String[] RATIOS = {"16:9", "4:3", "1:1"};
+
     private static String b(boolean v) { return v ? "1" : "0"; }
 
     /** 默认值（注册表里的 def；注册表没有的额外键看 EXTRA_DEFAULTS） */
@@ -57,6 +59,14 @@ final class SettingsStore {
         if (id.equals("split")) return b(p.style == DualState.STYLE_SPLIT);
         if (id.equals("dualOn")) return b(p.dualOn);
         if (id.equals("singleFront")) return b(p.singleFront);
+        // ── A 在 1.3.0–1.5.0 新做的功能（字段在 DualPrefs 里已有）──
+        if (id.equals("ratio")) return RATIOS[Math.max(0, Math.min(2, p.ratio))];     // 存的是 0/1/2，注册表里是 "16:9"/"4:3"/"1:1"
+        if (id.equals("flash")) return String.valueOf(p.flash);                       // 0 关 / 1 自动 / 2 开
+        if (id.equals("timerSec")) return String.valueOf(p.timerSec);                 // 0 / 3 / 5 / 10
+        if (id.equals("grid")) return b(p.gridLines);
+        if (id.equals("level")) return b(p.level);
+        if (id.equals("countVibrate")) return b(p.countVibrate);
+        if (id.equals("panelOrder")) { try { return p.sp.getString("panelOrder", ""); } catch (Throwable t) { return ""; } }
         // ── 新增的键 ──
         try {
             Object o = p.sp.getAll().get(id);
@@ -92,6 +102,14 @@ final class SettingsStore {
         else if (id.equals("split")) { p.style = on ? DualState.STYLE_SPLIT : DualState.STYLE_PIP; p.save(); }
         else if (id.equals("dualOn")) { p.dualOn = on; p.save(); }
         else if (id.equals("singleFront")) { p.singleFront = on; p.save(); }
+        else if (id.equals("ratio")) { for (int i = 0; i < RATIOS.length; i++) if (RATIOS[i].equals(v)) { p.ratio = i; p.save(); } }
+        else if (id.equals("flash")) { p.flash = Math.max(0, Math.min(2, toInt(v, 0))); p.save(); }
+        else if (id.equals("timerSec")) { int t = toInt(v, 0); p.timerSec = (t == 3 || t == 5 || t == 10) ? t : 0; p.save(); }
+        else if (id.equals("grid")) { p.gridLines = on; p.save(); }
+        else if (id.equals("level")) { p.level = on; p.save(); }
+        else if (id.equals("countVibrate")) { p.countVibrate = on; p.save(); }
+        else if (id.equals("panelOrder")) { p.sp.edit().putString("panelOrder", v).apply(); }
+        else if (id.equals("glassStyle") && valid(id, v)) { p.sp.edit().putString(id, v).apply(); DualUi.glassStyle = v; }
         else if (valid(id, v)) { p.sp.edit().putString(id, v).apply(); }
     }
 
@@ -122,4 +140,7 @@ final class SettingsStore {
     int fontScale() { return intValue("fontScale"); }
     boolean uiReset() { return bool("uiReset"); }
     boolean logOn() { return bool("logOn"); }
+    boolean countVibrate() { return bool("countVibrate"); }
+    /** 界面风格：frosted 毛玻璃（默认）/ liquid 液态玻璃（A 做完后接线；设置里这一项的「液态玻璃」现在灰色） */
+    String glassStyle() { return get("glassStyle"); }
 }

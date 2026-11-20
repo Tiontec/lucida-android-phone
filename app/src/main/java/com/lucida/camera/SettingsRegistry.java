@@ -26,7 +26,11 @@ final class SettingsRegistry {
 
     static final class Option {
         final String v, title, sub, shortText;   // 存储值 / 标题 / 说明 / 设置行右侧的简短当前值
-        Option(String v, String title, String sub, String shortText) { this.v = v; this.title = title; this.sub = sub; this.shortText = shortText; }
+        final boolean soon;                      // true = 这个选项灰色，点击提示「不可用」，不会被选中（如「液态玻璃」）
+        Option(String v, String title, String sub, String shortText, boolean soon) {
+            this.v = v; this.title = title; this.sub = sub; this.shortText = shortText; this.soon = soon;
+        }
+        Option(String v, String title, String sub, String shortText) { this(v, title, sub, shortText, false); }
     }
 
     static final class Item {

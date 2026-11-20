@@ -81,7 +81,14 @@ final class DualIcon extends View {
         float W = getWidth(), H = getHeight(), s = Math.min(W, H), cx = W / 2, cy = H / 2;
         if (round && bgColor != 0) {
             bg.setStyle(Paint.Style.FILL);
-            if (DualUi.glass) {
+            boolean refracted = false;
+            if (DualUi.liquid()) {      // 液态玻璃：背后的取景画面按透镜折弯（取景没出画时 draw 返回 false，退回下面的毛玻璃）
+                c.save(); c.translate(cx - s / 2, cy - s / 2);
+                refracted = GlassRefract.I.draw(c, this, s, s, s / 2);
+                c.restore();
+            }
+            if (refracted) { /* 已画好 */ }
+            else if (DualUi.glass) {
                 bg.setColor(0x33FFFFFF); c.drawCircle(cx, cy, s / 2, bg);
                 bg.setStyle(Paint.Style.STROKE); bg.setStrokeWidth(Math.max(1f, s * 0.026f)); bg.setColor(0x8CFFFFFF);
                 c.drawCircle(cx, cy, s / 2 - bg.getStrokeWidth() / 2, bg); bg.setStyle(Paint.Style.FILL);

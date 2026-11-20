@@ -1,138 +1,150 @@
 package com.lucida.camera;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.graphics.Color;
-import android.os.Build;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
-/** 双摄「更多设置」：实况 / 片门全开 / 小窗边框 / 前置镜像 / 录像声音 / 取景网格 / 满帧画面运行录制 / 毛玻璃界面 / 调色盘预设顺序。 */
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 「更多设置」整页的容器：页面栈（主页 → 集合页 → 单选列表页），左上角返回，系统返回键先退一页。
+ * 页面内容全部来自 SettingsRegistry，画页面的代码在 SettingsPageView.java / SettingsUi.java。
+ * 对 Activity 的接口和以前一样：new DualSettingsView(ctx, prefs, host)，作为 overlay 加进 root 即可。
+ */
 final class DualSettingsView extends FrameLayout {
     interface Host { void onClose(); void onChanged(boolean reconfigure); }
 
+    private final DualPrefs p;
+    private final Host host;
+    private final SettingsStore store;
+    private final List<SettingsPageView> stack = new ArrayList<SettingsPageView>();
+    private final FrameLayout pages;
+    private final TextView toast;
+    private View orderOverlay;
+    private int toastGen;
+    private boolean animating;
+
     DualSettingsView(final Context c, final DualPrefs p, final Host host) {
         super(c);
-        setBackgroundColor(0xF2101010);
+        this.p = p; this.host = host; this.store = new SettingsStore(p);
+        setBackgroundColor(0xFF101012);
         setClickable(true);
-        LinearLayout col = new LinearLayout(c); col.setOrientation(LinearLayout.VERTICAL);
-        addView(col, new FrameLayout.LayoutParams(-1, -1));
-        FrameLayout bar = new FrameLayout(c);
-        col.addView(bar, new LinearLayout.LayoutParams(-1, DualUi.dp(c, 56)));
-        TextView t = DualUi.label(c, "更多设置", 18, Color.WHITE);
-        bar.addView(t, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
-        TextView done = DualUi.label(c, "完成", 16, DualUi.YELLOW);
-        done.setPadding(DualUi.dp(c, 18), DualUi.dp(c, 10), DualUi.dp(c, 18), DualUi.dp(c, 10));
-        done.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { host.onClose(); } });
-        bar.addView(done, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
-        ScrollView sv = new ScrollView(c);
-        col.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1f));
-        LinearLayout list = new LinearLayout(c); list.setOrientation(LinearLayout.VERTICAL);
-        int pad = DualUi.dp(c, 16);
-        list.setPadding(pad, DualUi.dp(c, 6), pad, DualUi.dp(c, 40));
-        sv.addView(list, new FrameLayout.LayoutParams(-1, -2));
-        this.list = list; this.p = p; this.host = host;
-        fill();
+        setFocusableInTouchMode(true);
+
+        pages = new FrameLayout(c);
+        addView(pages, new FrameLayout.LayoutParams(-1, -1));
+
+        toast = DualUi.label(c, "", 14, Color.WHITE);
+        toast.setGravity(Gravity.CENTER);
+        toast.setPadding(DualUi.dp(c, 16), DualUi.dp(c, 9), DualUi.dp(c, 16), DualUi.dp(c, 9));
+        toast.setBackground(DualUi.surface(0xEB1E1E20, 20, c));
+        toast.setAlpha(0f); toast.setVisibility(View.GONE);
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        tp.topMargin = DualUi.dp(c, 66);
+        addView(toast, tp);
+
+        SettingsPageView home = new SettingsPageView(this, SettingsPageView.HOME, null);
+        stack.add(home);
+        pages.addView(home, new FrameLayout.LayoutParams(-1, -1));
+
+        // 系统返回键：先退一页（子页 / 预设顺序），在主页才交给 Activity 关闭整个设置
+        setOnKeyListener(new OnKeyListener() {
+            @Override public boolean onKey(View v, int keyCode, KeyEvent e) {
+                if (keyCode != KeyEvent.KEYCODE_BACK) return false;
+                if (orderOverlay == null && stack.size() <= 1) return false;
+                if (e.getAction() == KeyEvent.ACTION_UP) back();
+                return true;
+            }
+        });
     }
 
-    private LinearLayout list;
-    private DualPrefs p;
-    private Host host;
+    SettingsStore store() { return store; }
 
-    private void fill() {
-        final Context c = getContext();
-        final DualPrefs p = this.p; final Host host = this.host;
-        list.removeAllViews();
-        final int[] durs = {3, 5, 6, 8};
-        int di = 0; for (int i = 0; i < 4; i++) if (durs[i] == p.liveDur) di = i;
-        add(list, DualUi.card(c, "实况时长", DualUi.seg(c, new String[]{"3 秒", "5 秒", "6 秒", "8 秒"}, di, new DualUi.IntCb() {
-            @Override public void on(int i) { p.liveDur = durs[i]; p.save(); host.onChanged(false); } })));
-        add(list, DualUi.card(c, "实况保存方式", DualUi.seg(c, new String[]{"动态照片（单文件）", "照片 + 视频分开"}, p.liveSeparate ? 1 : 0, new DualUi.IntCb() {
-            @Override public void on(int i) { p.liveSeparate = i == 1; p.save(); host.onChanged(false); } })));
-        add(list, note(c, "安卓没有苹果那种实况照片：动态照片 = 一张 JPEG 里内嵌从按下快门开始的短视频，Google 相册等支持动态照片的相册可播放；没有快门前 1.5 秒；声音跟随「录像时录制声音」开关。"));
-        add(list, DualUi.toggleRow(c, "实况计时显示", "拍实况时在取景框左上角显示已经拍到第几秒、有没有拍完", p.liveTimer, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.liveTimer = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "片门全开", "前后摄像头都用 4:3 最大规格，成品 3:4；帧率尽量保持所选值", p.fullGate, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.fullGate = v; p.save(); host.onChanged(true); } }));
-        final SettingsStore sst = new SettingsStore(p);
-        final String[] pfv = {"30", "60", "120"};
-        int pfi = 1; for (int k = 0; k < 3; k++) if (Integer.parseInt(pfv[k]) == sst.pipDragFps()) pfi = k;
-        add(list, DualUi.card(c, "小窗滑动帧率", DualUi.seg(c, new String[]{"30 帧", "60 帧", "120 帧"}, pfi, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("pipDragFps", pfv[i]); } })));
-        // 单摄（只开一颗摄像头）的实况设置，和上面双摄的各自独立
-        final String[] sfv = {"15", "30", "60"}, sdv = {"3", "5", "6", "8"};
-        int sfi = 1; for (int k = 0; k < 3; k++) if (Integer.parseInt(sfv[k]) == sst.sLiveFps()) sfi = k;
-        int sdi = 0; for (int k = 0; k < 4; k++) if (Integer.parseInt(sdv[k]) == sst.sLiveDur()) sdi = k;
-        add(list, DualUi.card(c, "单摄 · 实况帧率", DualUi.seg(c, new String[]{"15 帧", "30 帧", "60 帧"}, sfi, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("sLiveFps", sfv[i]); } })));
-        add(list, DualUi.card(c, "单摄 · 实况时长", DualUi.seg(c, new String[]{"3 秒", "5 秒", "6 秒", "8 秒"}, sdi, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("sLiveDur", sdv[i]); } })));
-        add(list, DualUi.toggleRow(c, "单摄 · 实况 + 静态照片", "每次实况再多存一张同一瞬间的静态照片", sst.sLiveStill(), new DualUi.BoolCb() {
-            @Override public void on(boolean v) { sst.set("sLiveStill", v ? "1" : "0"); } }));
-        add(list, DualUi.toggleRow(c, "单摄 · 实况计时显示", null, sst.sLiveTimer(), new DualUi.BoolCb() {
-            @Override public void on(boolean v) { sst.set("sLiveTimer", v ? "1" : "0"); host.onChanged(false); } }));
-        final String[] zsv = {"0", "1", "2", "3", "4"};
-        int zsi = Math.max(0, Math.min(4, sst.intValue("zoomSpeed")));
-        add(list, DualUi.card(c, "变焦速度（转盘滑一屏 1×→）", DualUi.seg(c, new String[]{"10×", "15×", "20×", "25×", "30×"}, zsi, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("zoomSpeed", zsv[i]); host.onChanged(false); } })));
-        final String[] uwv = {"off", "0.6", "0.5"};
-        int uwi = 2; for (int k = 0; k < 3; k++) if (uwv[k].equals(sst.get("uwScale"))) uwi = k;
-        add(list, DualUi.card(c, "超广角（重启相机后生效）", DualUi.seg(c, new String[]{"关闭", "0.6×", "0.5×"}, uwi, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("uwScale", uwv[i]); } })));
-        final String[] tlv = {"auto", "2", "2.5", "3", "4", "5"};
-        int tli = 0; for (int k = 0; k < 6; k++) if (tlv[k].equals(sst.get("teleScale"))) tli = k;
-        add(list, DualUi.card(c, "长焦镜头倍数（重启相机后生效）", DualUi.seg(c, new String[]{"自动", "2×", "2.5×", "3×", "4×", "5×"}, tli, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("teleScale", tlv[i]); } })));
-        final String[] zrv = {"30", "50", "80", "100"};
-        int zri = 0; for (int k = 0; k < 4; k++) if (Integer.parseInt(zrv[k]) == sst.zoomRange()) zri = k;
-        add(list, DualUi.card(c, "变焦倍率上限（重启相机后生效）", DualUi.seg(c, new String[]{"30×", "50×", "80×", "100×"}, zri, new DualUi.IntCb() {
-            @Override public void on(int i) { sst.set("zoomRange", zrv[i]); } })));
-        add(list, DualUi.card(c, "小窗边框", DualUi.seg(c, new String[]{"无", "白色", "黑色"}, p.pipBorder, new DualUi.IntCb() {
-            @Override public void on(int i) { p.pipBorder = i; p.save(); host.onChanged(false); } })));
-        add(list, DualUi.toggleRow(c, "前置画面镜像", null, p.mirror, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.mirror = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "录像时录制声音", null, p.audio, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.audio = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "倒计时震动", "倒计时每数一秒轻震一下；关掉就只有数字，没有震动", p.countVibrate, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.countVibrate = v; p.save(); } }));
-        add(list, DualUi.toggleRow(c, "水平仪", "取景框中间显示水平线：竖拿手机时线跟地平线平行，歪在 0.8° 内变黄；手机平放俯拍时变成圆圈 + 小圆点", p.level, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.level = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "取景网格线", null, p.gridLines, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.gridLines = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "满帧画面运行录制", "开：手机发热也不降帧，按你选的帧率显示和录制（可能更烫、更耗电）；关：过热时自动降到 30 帧保护手机", p.fullRate, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.fullRate = v; p.save(); host.onChanged(false); } }));
-        add(list, DualUi.toggleRow(c, "毛玻璃界面", "开：提示条、按钮、面板、分段选择、开关、滑条换成半透明毛玻璃样式，规格面板有果冻弹动；关：全部是普通深色样式（安卓没有苹果系统的液态玻璃，这是模拟出来的）", p.glass, new DualUi.BoolCb() {
-            @Override public void on(boolean v) { p.glass = v; DualUi.glass = v; p.save(); host.onChanged(false); setBackgroundColor(v ? 0xCC101010 : 0xF2101010); post(new Runnable() { @Override public void run() { fill(); } }); } }));
-        add(list, linkRow(c, "调色盘预设顺序", "调整左右滑动调色盘时预设出现的先后", new Runnable() { @Override public void run() {
-            final DualOrderView[] ov = new DualOrderView[1];
-            ov[0] = new DualOrderView(getContext(), p, new Runnable() { @Override public void run() { removeView(ov[0]); host.onChanged(false); } });
-            addView(ov[0], new FrameLayout.LayoutParams(-1, -1));
-        } }));
-        add(list, note(c, "说明：多摄同时工作时系统不提供 RAW；动态照片声音跟随「录像时录制声音」。"));
+    // ───────────── 给各页用的操作 ─────────────
+
+    /** 设置改了：通知相机界面（reconfigure = 需要重配摄像头） */
+    void changed(boolean reconfigure) { host.onChanged(reconfigure); }
+
+    /** 玻璃 / 平面切换后：所有已打开的页面重画 */
+    void refreshAll() {
+        post(new Runnable() { @Override public void run() { for (SettingsPageView v : stack) v.rebuild(); } });
     }
 
-    static View linkRow(Context c, String title, String sub, final Runnable go) {
-        LinearLayout row = new LinearLayout(c);
-        row.setOrientation(LinearLayout.HORIZONTAL); row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setBackground(DualUi.surface(0x14FFFFFF, 14, c)); row.setPadding(DualUi.dp(c, 14), DualUi.dp(c, 12), DualUi.dp(c, 14), DualUi.dp(c, 12));
-        LinearLayout left = new LinearLayout(c); left.setOrientation(LinearLayout.VERTICAL);
-        left.addView(DualUi.label(c, title, 15, Color.WHITE));
-        if (sub != null) left.addView(DualUi.label(c, sub, 12, 0x80FFFFFF));
-        row.addView(left, new LinearLayout.LayoutParams(0, -2, 1f));
-        row.addView(DualUi.label(c, "›", 22, 0x80FFFFFF));
-        row.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { go.run(); } });
-        return row;
+    void toast(String s) {
+        final int gen = ++toastGen;
+        toast.setText(s);
+        toast.setVisibility(View.VISIBLE);
+        toast.animate().alpha(1f).setDuration(160).start();
+        postDelayed(new Runnable() { @Override public void run() {
+            if (gen == toastGen) toast.animate().alpha(0f).setDuration(250).start();
+        } }, 1600);
     }
 
-    private static TextView note(Context c, String s) {
-        TextView t = DualUi.label(c, s, 12, 0x73FFFFFF); t.setPadding(DualUi.dp(c, 4), 0, DualUi.dp(c, 4), 0); return t;
+    void push(int kind, String arg) {
+        if (animating) return;
+        final SettingsPageView from = stack.get(stack.size() - 1);
+        final SettingsPageView to = new SettingsPageView(this, kind, arg);
+        stack.add(to);
+        pages.addView(to, new FrameLayout.LayoutParams(-1, -1));
+        final float w = Math.max(1, getWidth());
+        to.setTranslationX(w);
+        animating = true;
+        from.animate().translationX(-w / 4f).setDuration(240).start();
+        to.animate().translationX(0f).setDuration(240).setListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator a) { animating = false; from.setTranslationX(0f); to.animate().setListener(null); }
+        }).start();
     }
 
-    private static void add(LinearLayout l, View v) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.topMargin = DualUi.dp(l.getContext(), 12);
-        l.addView(v, lp);
+    /** 左上角返回 / 系统返回键：预设顺序页 → 子页 → 关闭设置 */
+    void back() {
+        if (orderOverlay != null) { closeOrder(); return; }
+        if (stack.size() <= 1) { host.onClose(); return; }
+        if (animating) return;
+        final SettingsPageView top = stack.remove(stack.size() - 1);
+        final SettingsPageView under = stack.get(stack.size() - 1);
+        under.rebuild();                 // 右侧的当前值要刷新
+        final float w = Math.max(1, getWidth());
+        under.setTranslationX(-w / 4f);
+        animating = true;
+        under.animate().translationX(0f).setDuration(220).start();
+        top.animate().translationX(w).setDuration(220).setListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator a) { animating = false; pages.removeView(top); }
+        }).start();
+    }
+
+    void openOrder() {
+        if (orderOverlay != null) return;
+        final DualOrderView[] ov = new DualOrderView[1];
+        ov[0] = new DualOrderView(getContext(), p, "‹ 设置", new Runnable() { @Override public void run() { closeOrder(); } });
+        orderOverlay = ov[0];
+        addView(ov[0], new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void closeOrder() {
+        if (orderOverlay == null) return;
+        removeView(orderOverlay); orderOverlay = null;
+        host.onChanged(false);           // 预设顺序可能变了
+    }
+
+    // ───────────── 系统栏 / 焦点 ─────────────
+
+    @Override public WindowInsets onApplyWindowInsets(WindowInsets in) {
+        int top = in.getSystemWindowInsetTop(), bottom = in.getSystemWindowInsetBottom();
+        setPadding(0, top, 0, bottom);
+        return super.onApplyWindowInsets(in);
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        requestApplyInsets();            // 后加进来的 overlay 要主动要一次系统栏边距
+        post(new Runnable() { @Override public void run() { requestFocus(); } });
     }
 }

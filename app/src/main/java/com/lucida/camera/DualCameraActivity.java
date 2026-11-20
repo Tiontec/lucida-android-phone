@@ -154,6 +154,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private int focusToken, relockToken, toastToken;
     private GestureDetector gd;
     private boolean gDownPip, specOpen, lastGlass;
+    private String lastStyle = "liquid";
     private LinearLayout hintStack;
     private final boolean[] afLock = new boolean[2], aeLock = new boolean[2];
     private final int[] evIdx = new int[2], evLo = new int[2], evHi = new int[2], senOri = {90, 270};
@@ -178,7 +179,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         ui = new Handler(Looper.getMainLooper());
         prefs = new DualPrefs(this);
         gradeBack.load(prefs.sp, "g_"); gradeFront.load(prefs.sp, "gf_");
-        DualUi.glass = prefs.glass;
+        DualUi.glass = prefs.glass; DualUi.glassStyle = prefs.sp.getString("glassStyle", "liquid"); lastStyle = DualUi.glassStyle;
         state.style = prefs.style; state.mirrorFront = prefs.mirror; state.pipW = prefs.pipW;
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
         dual = prefs.dualOn;
@@ -248,6 +249,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (Build.VERSION.SDK_INT >= 29 && thermalListener != null) {
             try { ((PowerManager) getSystemService(POWER_SERVICE)).removeThermalStatusListener(thermalListener); } catch (Throwable ignore) {}
         }
+        GlassRefract.I.detach();
         closeCameras();
         if (glH != null) {
             final GlComposer g = gl;
@@ -276,6 +278,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         sv = new SurfaceView(this);
+        GlassRefract.I.attach(sv);
         sv.getHolder().addCallback(this);
         root.addView(sv, new FrameLayout.LayoutParams(-1, -1));
 
@@ -705,7 +708,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 state.mirrorFront = prefs.mirror; if (gl != null) gl.borderMode = prefs.pipBorder;
                 gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
                 syncLevel();
-                if (lastGlass != prefs.glass) applyGlass();
+                if (lastGlass != prefs.glass || !lastStyle.equals(DualUi.glassStyle)) applyGlass();
                 if (prefs.fullRate) {
                     pendingThrottle = false;
                     if (throttled && !recording && !clipping) { throttled = false; effFps = prefs.fps; say("满帧画面运行录制已开启，恢复所选帧率"); restart(); }
@@ -802,14 +805,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
         return DualUi.round(0xF0161616, rDp, this);
     }
-    private void stylePill() { specPill.setBackground(DualUi.surface(0x29FFFFFF, 18, this)); }
+    private void stylePill() { specPill.setBackground(DualUi.surfaceFor(specPill, 0x29FFFFFF, 18, this)); }
     private void styleToast() {
         toast.setBackground(DualUi.glass ? panelBg(13) : DualUi.round(0xD9121212, 13, this));
     }
 
     /** 毛玻璃界面开关变了：重画所有控件 */
     private void applyGlass() {
-        lastGlass = prefs.glass; DualUi.glass = prefs.glass;
+        lastGlass = prefs.glass; DualUi.glass = prefs.glass; lastStyle = DualUi.glassStyle;
         stylePill(); styleToast();
         DualIcon[] ics = {btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore};
         for (DualIcon i : ics) if (i != null) i.invalidate();
