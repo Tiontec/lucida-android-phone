@@ -1,0 +1,75 @@
+package com.lucida.camera;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+/** 原生双摄的设置（记住上次的选择）。 */
+final class DualPrefs {
+    final SharedPreferences sp;
+    int res = 1080;            // 720 / 1080 / 2160（目标分辨率档）
+    int fps = 30;              // 24 / 30 / 60
+    boolean fullGate = false;  // 片门全开：前后摄都用 4:3 最大规格，成品 3:4
+    int pipBorder = 0;         // 0 无边框 / 1 白色 / 2 黑色
+    boolean mirror = false;    // 前摄镜像
+    boolean audio = true;      // 录像带声音
+    int style = DualState.STYLE_PIP;
+    boolean gridLines = false; // 取景网格线
+    boolean live = false;      // 实况（动态照片）
+    int liveDur = 3;           // 3 / 5 / 6 / 8 秒
+    boolean liveSeparate = false; // 照片 + 视频分开保存
+    boolean heif = false;      // 照片格式 HEIF（Android 14+）
+    int timerSec = 0;          // 倒计时拍摄：0 关 / 3 / 5 / 10 秒
+    boolean countVibrate = true; // 倒计时每秒震动
+    String panelOrder = "";    // 多功能面板按钮顺序（逗号分隔的按钮 id），空 = 出厂顺序
+    boolean level = false;     // 水平仪
+    int flash = 0;             // 拍照闪光灯：0 关 / 1 自动（暗处才闪）/ 2 开
+    int ratio = 0;             // 画幅比例（竖屏）：0 = 16:9（铺满）/ 1 = 4:3 / 2 = 1:1；片门全开时固定 3:4
+    int pipShape = 0;          // 小窗形状：0 圆角 / 1 大圆角 / 2 直角
+    boolean liveTimer = true;  // 实况计时（取景框左上角）
+    boolean glass = false;     // 毛玻璃界面（半透明 + 高光描边；不是系统液态玻璃）
+    int gradeTarget = 2;       // 调色板正在改谁：0 后置 / 1 前置 / 2 同时
+    float pipW = 0.32f;        // 小窗宽度占比（双击放大 / 缩小）
+    boolean dualOn = false;    // 双摄开关（默认关 = 单摄；开 = 前后摄像头同时工作，设备不行就自动退回单摄）
+    boolean singleFront = false; // 单摄时用前置摄像头
+    boolean fullRate = false;  // 满帧画面运行录制：开 = 发热也不降帧；关 = 过热时自动降到 30 帧
+
+    DualPrefs(Context c) {
+        sp = c.getSharedPreferences("lucida_dual", Context.MODE_PRIVATE);
+        res = pick(sp.getInt("res", 1080), 720, 1080, 2160);
+        fps = pick(sp.getInt("fps", 30), 24, 30, 60);
+        fullGate = sp.getBoolean("fullGate", false);
+        pipBorder = Math.max(0, Math.min(2, sp.getInt("pipBorder", 0)));
+        mirror = sp.getBoolean("mirror2", false);
+        audio = sp.getBoolean("audio", true);
+        style = sp.getInt("style", DualState.STYLE_PIP) == DualState.STYLE_SPLIT ? DualState.STYLE_SPLIT : DualState.STYLE_PIP;
+        gridLines = sp.getBoolean("grid", false);
+        live = sp.getBoolean("live", false);
+        int d = sp.getInt("liveDur", 3); liveDur = (d == 3 || d == 5 || d == 6 || d == 8) ? d : 3;
+        liveSeparate = sp.getBoolean("liveSep", false);
+        heif = sp.getBoolean("heif", false);
+        pipShape = Math.max(0, Math.min(2, sp.getInt("pipShape", 0)));
+        ratio = Math.max(0, Math.min(2, sp.getInt("ratio", 0)));
+        flash = Math.max(0, Math.min(2, sp.getInt("flash", 0)));
+        timerSec = sp.getInt("timerSec", 0); if (timerSec != 3 && timerSec != 5 && timerSec != 10) timerSec = 0;
+        level = sp.getBoolean("level", false);
+        panelOrder = sp.getString("panelOrder", "");
+        countVibrate = sp.getBoolean("countVibrate", true);
+        liveTimer = sp.getBoolean("liveTimer", true);
+        glass = sp.getBoolean("glass", false);
+        gradeTarget = Math.max(0, Math.min(2, sp.getInt("gradeTarget", 2)));
+        pipW = Math.max(0.2f, Math.min(0.6f, sp.getFloat("pipW", 0.32f)));
+        fullRate = sp.getBoolean("fullRate", false);
+        dualOn = sp.getBoolean("dualOn", false);
+        singleFront = sp.getBoolean("singleFront", false);
+    }
+
+    private static int pick(int v, int a, int b, int c) { return v == a || v == b || v == c ? v : b; }
+
+    void save() {
+        sp.edit().putInt("res", res).putInt("fps", fps).putBoolean("fullGate", fullGate).putInt("pipBorder", pipBorder)
+                .putBoolean("mirror2", mirror).putBoolean("audio", audio).putInt("style", style).putBoolean("grid", gridLines)
+                .putBoolean("live", live).putInt("liveDur", liveDur).putBoolean("liveSep", liveSeparate).putBoolean("heif", heif).putInt("pipShape", pipShape).putInt("ratio", ratio).putInt("flash", flash).putInt("timerSec", timerSec).putBoolean("level", level).putString("panelOrder", panelOrder).putBoolean("countVibrate", countVibrate)
+                .putBoolean("liveTimer", liveTimer).putBoolean("glass", glass).putInt("gradeTarget", gradeTarget).putFloat("pipW", pipW)
+                .putBoolean("fullRate", fullRate).putBoolean("dualOn", dualOn).putBoolean("singleFront", singleFront).apply();
+    }
+}
