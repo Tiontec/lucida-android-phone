@@ -10,7 +10,7 @@ final class DualPrefs {
     int fps = 30;              // 24 / 30 / 60
     boolean fullGate = false;  // 片门全开：前后摄都用 4:3 最大规格，成品 3:4
     int pipBorder = 0;         // 0 无边框 / 1 白色 / 2 黑色
-    boolean mirror = false;    // 前摄镜像
+    boolean mirror = true;     // 前摄镜像（默认开：前置视角和拍照时一致）
     boolean audio = true;      // 录像带声音
     int style = DualState.STYLE_PIP;
     boolean gridLines = false; // 取景网格线
@@ -39,7 +39,7 @@ final class DualPrefs {
         fps = pick(sp.getInt("fps", 30), 24, 30, 60);
         fullGate = sp.getBoolean("fullGate", false);
         pipBorder = Math.max(0, Math.min(2, sp.getInt("pipBorder", 0)));
-        mirror = sp.getBoolean("mirror2", false);
+        mirror = sp.getBoolean("mirror2", true);
         audio = sp.getBoolean("audio", true);
         style = sp.getInt("style", DualState.STYLE_PIP) == DualState.STYLE_SPLIT ? DualState.STYLE_SPLIT : DualState.STYLE_PIP;
         gridLines = sp.getBoolean("grid", false);

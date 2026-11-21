@@ -155,6 +155,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private GestureDetector gd;
     private boolean gDownPip, specOpen, lastGlass;
     private String lastStyle = "liquid";
+    private boolean lastPanelGlass = true;
     private LinearLayout hintStack;
     private final boolean[] afLock = new boolean[2], aeLock = new boolean[2];
     private final int[] evIdx = new int[2], evLo = new int[2], evHi = new int[2], senOri = {90, 270};
@@ -179,7 +180,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         ui = new Handler(Looper.getMainLooper());
         prefs = new DualPrefs(this);
         gradeBack.load(prefs.sp, "g_"); gradeFront.load(prefs.sp, "gf_");
-        DualUi.glass = prefs.glass; DualUi.glassStyle = prefs.sp.getString("glassStyle", "liquid"); lastStyle = DualUi.glassStyle;
+        DualUi.glass = prefs.glass; DualUi.glassStyle = prefs.sp.getString("glassStyle", "liquid"); lastStyle = DualUi.glassStyle; DualUi.panelGlass = PanelTheme.isGlass(this); lastPanelGlass = DualUi.panelGlass;
         state.style = prefs.style; state.mirrorFront = prefs.mirror; state.pipW = prefs.pipW;
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
         dual = prefs.dualOn;
@@ -708,7 +709,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 state.mirrorFront = prefs.mirror; if (gl != null) gl.borderMode = prefs.pipBorder;
                 gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
                 syncLevel();
-                if (lastGlass != prefs.glass || !lastStyle.equals(DualUi.glassStyle)) applyGlass();
+                if (lastGlass != prefs.glass || !lastStyle.equals(DualUi.glassStyle) || lastPanelGlass != DualUi.panelGlass) applyGlass();
                 if (prefs.fullRate) {
                     pendingThrottle = false;
                     if (throttled && !recording && !clipping) { throttled = false; effFps = prefs.fps; say("满帧画面运行录制已开启，恢复所选帧率"); restart(); }
@@ -812,7 +813,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     /** 毛玻璃界面开关变了：重画所有控件 */
     private void applyGlass() {
-        lastGlass = prefs.glass; DualUi.glass = prefs.glass; lastStyle = DualUi.glassStyle;
+        lastGlass = prefs.glass; DualUi.glass = prefs.glass; lastStyle = DualUi.glassStyle; lastPanelGlass = DualUi.panelGlass;
         stylePill(); styleToast();
         DualIcon[] ics = {btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore};
         for (DualIcon i : ics) if (i != null) i.invalidate();
@@ -1147,7 +1148,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 rep.append(id).append(": 等效").append(Math.round(eq)).append("mm ").append(px / 1000000f).append("MP").append(ok && !mono ? "" : "（不可用）").append("；");
                 if (id.equals(mainBackId) || !ok || mono || eq <= 0 || px < 2500000L) continue;
                 float r = eq / mainEq;
-                if (r >= .3f && r <= .85f && px > bestUw) { bestUw = px; uwId = id; uwRatio = Math.round(r * 10f) / 10f; }
+                if (r >= .2f && r <= .85f && px > bestUw) { bestUw = px; uwId = id; uwRatio = Math.round(r * 10f) / 10f; }
                 else if (r >= 1.5f && px > bestTele) { bestTele = px; teleId = id; teleRatio = Math.round(r * 2f) / 2f; }
             }
         } catch (Throwable t) { rep.append("枚举出错：").append(t); }
@@ -1177,10 +1178,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     /** 转盘倍数变了：该换镜头就换（单摄后置才换；双摄 / 录像中不换） */
     private void maybeSwitchLens(float z) {
         if (!lensExtOn()) return;
-        int want = (uwId != null && z < 0.995f) ? -1 : (teleId != null && z >= teleRatio * 0.995f) ? 1 : 0;
+        // 合成摄像头（系统自己无缝切换超广角 / 长焦）：这里不主动换，免得和系统冲突
+        if (zoomMin[0] < 0.98f) return;
+        // 阈值放宽：超广角 z < 0.95（以前 0.995）；长焦 z >= 倍率 × 0.9（以前 × 0.995），减少变焦时来回抖动
+        int want = (uwId != null && z < 0.95f) ? -1 : (teleId != null && z >= teleRatio * 0.9f) ? 1 : 0;
         if (want == curLens) return;
         if (recording || clipping) return;
         if (System.currentTimeMillis() < lensBusyUntil) return;
+        AppLog.info("镜头", "缩放 " + (Math.round(z * 100) / 100f) + "×，换到" + (want < 0 ? "超广角" : want > 0 ? "长焦" : "主镜头"));
         switchLens(want);
     }
 
@@ -1437,24 +1442,15 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                         fillReq(cam, rb);
                         cs.setRepeatingRequest(rb.build(), capCallback(cam), camH);
                     } catch (Exception e) {
-                        // 完整请求起不来（vivo / OriginOS 等定制框架）：只留「目标 + 连续对焦」的最小请求先把画面拉起来
-                        AppLog.warn("预览请求", "完整请求失败：" + e.getMessage());
+                        // 完整请求建不出来（某些定制 ROM 不认某个字段）：先用「只留目标 + 连续对焦」的最简请求把画面拉起来
                         try {
                             CaptureRequest.Builder mb = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                             mb.addTarget(s);
-                            mb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                            safeSet(mb, CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                             reqB[cam] = mb;
                             cs.setRepeatingRequest(mb.build(), capCallback(cam), camH);
-                            synchronized (DualCameraActivity.this) { openedCount++; }
-                            if (openedCount >= needCount()) ui.post(new Runnable() { @Override public void run() {
-                                spinnerView.setVisibility(View.GONE);
-                                say("这台手机不吃完整相机参数，已用基础参数打开（变焦 / 曝光等仍可用）");
-                            } });
-                            return;
-                        } catch (Exception e2) {
-                            AppLog.warn("预览请求", "最小请求也失败：" + e2.getMessage());
-                        }
-                        fail("error", "开启预览失败：" + e.getMessage() + "。" + diag()); return;
+                            AppLog.warn("相机", "完整预览请求失败，已改用最简请求：" + e);
+                        } catch (Exception e2) { fail("error", "开启预览失败：" + e2.getMessage() + "。" + diag()); return; }
                     }
                     synchronized (DualCameraActivity.this) { openedCount++; }
                     if (openedCount >= needCount()) ui.post(new Runnable() { @Override public void run() {
@@ -1482,40 +1478,42 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
-    /** 把这颗摄像头当前的所有状态（连续对焦 / 帧率 / 倍数 / 测光区域 / AE 锁 / 曝光补偿）写进预览请求（相机线程调用） */
+    /**
+     * 把这颗摄像头当前的所有状态写进预览请求（相机线程调用）。
+     * 规则（见 vivo_crash_analysis / guangjiao_adaptation_analysis）：
+     *  - 能写显式值的一律写显式值，不写 null（定制 ROM 对 set(key, null) 没有保护，会直接 NPE）；
+     *  - 每一项单独 safeSet，单点失败不拖垮整帧预览；
+     *  - 测光区域 / 曝光补偿 / AE 锁「用到才写」：不写 = 系统默认。这些请求每次都在新建的构建器上写（见 pushReq），不需要用 null 清掉。
+     */
     private void fillReq(int cam, CaptureRequest.Builder rb) {
-        // 每一项单独包 try：vivo / OriginOS 的定制相机框架里 Builder.set(key, null) 会走到 Integer 拆箱炸 NPE
-        // （AOSP 主线里 null = 删除字段，是安全的；定制框架不是）。以前 FLASH_MODE 传 null 是相机一开就崩的直接原因。
-        try { rb.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE); } catch (Throwable ignore) {}
-        if (cam == 0) {
-            // 手电筒：写显式的「亮 / 灭」，永远不写 null（null 在定制框架上会崩；TEMPLATE_PREVIEW 默认就是灭）
-            int flash = (torchByReq && torchOn) ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF;
-            try { rb.set(CaptureRequest.FLASH_MODE, Integer.valueOf(flash)); } catch (Throwable ignore) {}
-        }
-        if (reqStage < 2) {
-            try { rb.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1])); } catch (Throwable ignore) {}
-        }
+        safeSet(rb, CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+        // 闪光模式永远显式写：开 = TORCH，关 = OFF（不再写 null）
+        if (cam == 0) safeSet(rb, CaptureRequest.FLASH_MODE, (torchByReq && torchOn) ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
+        if (reqStage < 2) safeSet(rb, CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
         float z = reqZoom(cam);
-        if (Build.VERSION.SDK_INT >= 30) {
-            try { rb.set(CaptureRequest.CONTROL_ZOOM_RATIO, z); } catch (Throwable ignore) {}
-        } else {
+        if (Build.VERSION.SDK_INT >= 30) safeSet(rb, CaptureRequest.CONTROL_ZOOM_RATIO, z);
+        else {
             Rect a = activeArr[cam];
             if (a != null) {
                 float zz = Math.max(1f, z);
                 int w = Math.round(a.width() / zz), h = Math.round(a.height() / zz);
                 int l = a.left + (a.width() - w) / 2, t = a.top + (a.height() - h) / 2;
-                try { rb.set(CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h)); } catch (Throwable ignore) {}
+                safeSet(rb, CaptureRequest.SCALER_CROP_REGION, new Rect(l, t, l + w, t + h));
             }
         }
-        // 下面这些「点按对焦 / 曝光补偿 / 锁定」只在真的用到时才写进请求；平时一律不写（写 null = 清掉）。
-        // 以前平时也写「权重 0 的测光区域 / 曝光补偿 0 / AE 锁 关」，个别机型（联发科 + ColorOS）会因此一帧都不出。
-        try {
+        // 测光区域 / 曝光补偿 / AE 锁：只在真的用到时才写（平时不写，走系统默认）。最简请求（reqStage >= 1）一律不写
+        if (reqStage < 1) {
             MeteringRectangle[] mr = focusRegion[cam];
-            rb.set(CaptureRequest.CONTROL_AF_REGIONS, mr != null && maxAf[cam] > 0 ? mr : null);
-            rb.set(CaptureRequest.CONTROL_AE_REGIONS, mr != null && maxAe[cam] > 0 ? mr : null);
-            rb.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, evIdx[cam] != 0 ? Integer.valueOf(evIdx[cam]) : null);
-            rb.set(CaptureRequest.CONTROL_AE_LOCK, aeLock[cam] && !evDragging[cam] ? Boolean.TRUE : null);
-        } catch (Throwable ignore) {}
+            if (mr != null && maxAf[cam] > 0) safeSet(rb, CaptureRequest.CONTROL_AF_REGIONS, mr);
+            if (mr != null && maxAe[cam] > 0) safeSet(rb, CaptureRequest.CONTROL_AE_REGIONS, mr);
+            if (evIdx[cam] != 0) safeSet(rb, CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, Integer.valueOf(evIdx[cam]));
+            if (aeLock[cam] && !evDragging[cam]) safeSet(rb, CaptureRequest.CONTROL_AE_LOCK, Boolean.TRUE);
+        }
+    }
+
+    /** 单项写入：任何一项失败都只跳过这一项，不影响整帧预览 */
+    private static <T> void safeSet(CaptureRequest.Builder rb, CaptureRequest.Key<T> key, T value) {
+        try { rb.set(key, value); } catch (Throwable ignore) { }
     }
 
     private CameraCaptureSession.CaptureCallback capCallback(final int cam) {
@@ -1581,10 +1579,14 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (camH == null) return;
         camH.post(new Runnable() { @Override public void run() {
             try {
-                CaptureRequest.Builder rb = reqB[cam];
                 CameraCaptureSession cs = ses[cam];
-                if (rb == null || cs == null) return;
+                CameraDevice d = dev[cam];
+                if (cs == null || d == null || gl == null) return;
+                // 每次都新建一个请求构建器再写：之前写过的字段不会残留，要「清掉」的字段直接不写，不需要 set(key, null)
+                CaptureRequest.Builder rb = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                rb.addTarget(gl.surface(cam));
                 fillReq(cam, rb);
+                reqB[cam] = rb;
                 cs.setRepeatingRequest(rb.build(), capCallback(cam), camH);
             } catch (Throwable ignore) {}
         } });

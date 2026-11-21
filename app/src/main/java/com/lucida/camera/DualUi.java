@@ -18,7 +18,9 @@ final class DualUi {
     static boolean glass = false;
     /** 玻璃样式（设置 → 界面风格）：frosted = 毛玻璃；liquid = 液态玻璃（自绘折射，小控件拿取景画面做透镜） */
     static String glassStyle = "liquid";
-    static boolean liquid() { return glass && !"frosted".equals(glassStyle); }
+    /** 设置里「面板样式」是不是默认（玻璃）；选了黑色 / 白色纯色时相机界面的玻璃改成深色纯色 */
+    static boolean panelGlass = true;
+    static boolean liquid() { return glass && panelGlass && !"frosted".equals(glassStyle); }
 
     static int dp(Context c, float v) { return Math.round(v * c.getResources().getDisplayMetrics().density); }
 
@@ -29,6 +31,7 @@ final class DualUi {
     /** 面板 / 按钮底：玻璃模式 = 半透明渐变 + 高光描边，否则是平的底色 */
     static GradientDrawable surface(int flat, float rDp, Context c) {
         if (!glass) return round(flat, rDp, c);
+        if (!panelGlass) return round(0xF5101010, rDp, c);
         GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0x47FFFFFF, 0x14FFFFFF, 0x2EFFFFFF});
         g.setCornerRadius(dp(c, rDp)); g.setStroke(Math.max(1, dp(c, 1)), 0x73FFFFFF);
         return g;

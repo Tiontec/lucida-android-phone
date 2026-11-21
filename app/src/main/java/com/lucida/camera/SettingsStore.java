@@ -67,6 +67,15 @@ final class SettingsStore {
         if (id.equals("level")) return b(p.level);
         if (id.equals("countVibrate")) return b(p.countVibrate);
         if (id.equals("panelOrder")) { try { return p.sp.getString("panelOrder", ""); } catch (Throwable t) { return ""; } }
+        // 旧值 0（只存实况）/ 1（实况 + 静态照片）统一迁移为 pair（照片 + 视频）：两个旧值都不丢信息
+        if (id.equals("sLiveStill")) {
+            try {
+                Object o = p.sp.getAll().get(id);
+                if (o != null && (String.valueOf(o).equals("0") || String.valueOf(o).equals("1"))) return "pair";
+            } catch (Throwable ignore) { }
+        }
+        // 没存过界面风格：按旧的「液态玻璃界面」开关推导（开 = 液态玻璃，关 = 默认面板），旧用户外观不变
+        if (id.equals("glassStyle")) return p.glass ? "liquid" : "plain";
         // ── 新增的键 ──
         try {
             Object o = p.sp.getAll().get(id);
@@ -109,7 +118,12 @@ final class SettingsStore {
         else if (id.equals("level")) { p.level = on; p.save(); }
         else if (id.equals("countVibrate")) { p.countVibrate = on; p.save(); }
         else if (id.equals("panelOrder")) { p.sp.edit().putString("panelOrder", v).apply(); }
-        else if (id.equals("glassStyle") && valid(id, v)) { p.sp.edit().putString(id, v).apply(); DualUi.glassStyle = v; }
+        else if (id.equals("glassStyle") && valid(id, v)) {
+            // 界面风格：毛玻璃 / 液态玻璃 = 开启玻璃；默认面板 = 关掉玻璃（同步到 glass）
+            p.sp.edit().putString(id, v).apply(); DualUi.glassStyle = v;
+            p.glass = !"plain".equals(v); p.save(); DualUi.glass = p.glass;
+        }
+        else if (id.equals("panelTheme") && valid(id, v)) { p.sp.edit().putString(id, v).apply(); DualUi.panelGlass = "glass".equals(v); }
         else if (valid(id, v)) { p.sp.edit().putString(id, v).apply(); }
     }
 
@@ -119,7 +133,8 @@ final class SettingsStore {
 
     // 单摄的实况（和双摄的 liveDur / liveSeparate / liveTimer 各自独立）—— 由 A 接线
     int sLiveDur() { return intValue("sLiveDur"); }
-    boolean sLiveStill() { return bool("sLiveStill"); }
+    /** 单摄实况保存方式：true = pair（照片 + 视频，默认）。安卓没有 native（只存实况，仅 iOS） */
+    boolean sLiveStill() { return get("sLiveStill").equals("pair"); }
     boolean sLiveTimer() { return bool("sLiveTimer"); }
     int sLiveFps() { return intValue("sLiveFps"); }
 

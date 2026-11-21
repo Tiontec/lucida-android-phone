@@ -18,21 +18,28 @@ import java.util.List;
  * 和 iOS 的 SettingsPages.swift 一一对应。
  */
 final class SettingsPageView extends FrameLayout {
-    static final int HOME = 0, COLLECTION = 1, RADIO = 2;
+    static final int HOME = 0, COLLECTION = 1, RADIO = 2, PAGE = 3;   // PAGE = 独立页面（arg = dest：log / cams / version / about / donate），内容在 SettingsPagesM3.java
 
     private final DualSettingsView owner;
     private final int kind;
     private final String arg;                 // COLLECTION = 集合 id；RADIO = 设置项 id
     private final SettingsStore st;
-    private final LinearLayout list;
+    final LinearLayout list;              // SettingsPagesM3 要往里加内容
     private final DualIcon back;
     private final Runnable soonToast;
+    /** 日志页的状态：筛选（0 全部 / 1 警告及以上 / 2 错误）、已展开的条目、日志监听 */
+    int logFilter = 0;
+    final java.util.Set<String> expandedLogKeys = new java.util.HashSet<String>();
+    private AppLog.Listener logListener;
+    /** 版本更新页：旧版记录（11.x）是否展开（默认折叠） */
+    boolean versionOldExpanded = false;
+    void toggleVersionOld() { versionOldExpanded = !versionOldExpanded; refreshPage(); }
 
     SettingsPageView(final DualSettingsView owner, int kind, String arg) {
         super(owner.getContext());
         this.owner = owner; this.kind = kind; this.arg = arg; this.st = owner.store();
         final Context c = getContext();
-        setBackgroundColor(0xFF101012);
+        setBackgroundColor(PanelTheme.pageBg(c));
         setClickable(true);
         soonToast = new Runnable() { @Override public void run() { owner.toast(SettingsRegistry.SOON_TOAST); } };
 
@@ -48,9 +55,13 @@ final class SettingsPageView extends FrameLayout {
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(DualUi.dp(c, 40), DualUi.dp(c, 40), Gravity.CENTER_VERTICAL | Gravity.LEFT);
         bp.leftMargin = DualUi.dp(c, 16);
         bar.addView(back, bp);
-        TextView t = DualUi.label(c, title(), 18, Color.WHITE);
+        TextView t = DualUi.label(c, title(), 18, PanelTheme.text(c));
         t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         bar.addView(t, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        if (kind == PAGE && "log".equals(arg)) {
+            logListener = new AppLog.Listener() { @Override public void onLogChanged() { refreshPage(); } };
+            AppLog.addListener(logListener);
+        }
 
         ScrollView sv = new ScrollView(c);
         sv.setVerticalScrollBarEnabled(false);
@@ -65,6 +76,7 @@ final class SettingsPageView extends FrameLayout {
 
     private String title() {
         if (kind == HOME) return "更多设置";
+        if (kind == PAGE) return SettingsPagesM3.title(arg);
         if (kind == COLLECTION) { SettingsRegistry.Collection c = SettingsRegistry.collection(arg); return c == null ? "设置" : c.title; }
         SettingsRegistry.Item it = SettingsRegistry.item(arg);
         return it == null ? "设置" : it.title;
@@ -74,10 +86,12 @@ final class SettingsPageView extends FrameLayout {
 
     /** 按注册表重画整页（玻璃 / 平面切换、从子页返回时调用） */
     void rebuild() {
+        setBackgroundColor(PanelTheme.pageBg(getContext()));     // 面板样式可能刚换
         back.invalidate();
         list.removeAllViews();
         if (kind == HOME) buildHome();
         else if (kind == COLLECTION) { SettingsRegistry.Collection c = SettingsRegistry.collection(arg); if (c != null) buildCollectionPage(c); }
+        else if (kind == PAGE) SettingsPagesM3.build(this, arg);
         else { SettingsRegistry.Item it = SettingsRegistry.item(arg); if (it != null) buildRadioPage(it); }
     }
 
@@ -85,6 +99,20 @@ final class SettingsPageView extends FrameLayout {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.topMargin = DualUi.dp(getContext(), topDp);
         list.addView(v, lp);
+    }
+
+    // ───────────── 给 SettingsPagesM3 用 ─────────────
+    Context ctx() { return getContext(); }
+    /** 往页面里加一块内容（上边距 topDp） */
+    void put(View v, int topDp) { add(v, topDp); }
+    /** 重画本页（日志变化、筛选变化、展开 / 收起时用） */
+    void refreshPage() { post(new Runnable() { @Override public void run() { if (kind == PAGE) rebuild(); } }); }
+    /** 页面里的轻提示 */
+    void hint(String s) { owner.toast(s); }
+
+    @Override protected void onDetachedFromWindow() {
+        if (logListener != null) { AppLog.removeListener(logListener); logListener = null; }
+        super.onDetachedFromWindow();
     }
 
     private void buildHome() {
@@ -207,7 +235,8 @@ final class SettingsPageView extends FrameLayout {
         return SettingsUi.row(c, it.title, SettingsRegistry.subtitle(it), SettingsRegistry.rowValue(st, it), SettingsUi.chevron(c), new Runnable() {
             @Override public void run() {
                 if (it.isLive() && it.dest.equals("order")) owner.openOrder();
-                else owner.toast(SettingsRegistry.SOON_TOAST);      // 摄像头检测 / 赞赏 / 日志 / 版本 / 关于：M3 做，先灰色
+                else if (it.isLive() && SettingsPagesM3.isM3(it.dest)) owner.push(PAGE, it.dest);   // 日志 / 摄像头 / 版本 / 关于 / 赞赏
+                else owner.toast(SettingsRegistry.SOON_TOAST);
             } });
     }
 
@@ -227,6 +256,7 @@ final class SettingsPageView extends FrameLayout {
                     st.set(it.id, o.v);
                     for (int i = 0; i < checks.size(); i++) checks.get(i).setVisibility(values.get(i).equals(o.v) ? View.VISIBLE : View.INVISIBLE);
                     owner.changed(it.reconfigure);
+                    if (it.id.equals("glassStyle") || it.id.equals("panelTheme")) owner.refreshAll();   // 玻璃 / 面板样式变了，所有页面重画
                 } });
             out.add(o.soon ? SettingsUi.soon(c, row, soonToast) : row);
         }

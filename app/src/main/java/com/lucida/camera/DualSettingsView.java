@@ -35,17 +35,17 @@ final class DualSettingsView extends FrameLayout {
     DualSettingsView(final Context c, final DualPrefs p, final Host host) {
         super(c);
         this.p = p; this.host = host; this.store = new SettingsStore(p);
-        setBackgroundColor(0xFF101012);
+        setBackgroundColor(PanelTheme.pageBg(c));
         setClickable(true);
         setFocusableInTouchMode(true);
 
         pages = new FrameLayout(c);
         addView(pages, new FrameLayout.LayoutParams(-1, -1));
 
-        toast = DualUi.label(c, "", 14, Color.WHITE);
+        toast = DualUi.label(c, "", 14, PanelTheme.toastText());
         toast.setGravity(Gravity.CENTER);
         toast.setPadding(DualUi.dp(c, 16), DualUi.dp(c, 9), DualUi.dp(c, 16), DualUi.dp(c, 9));
-        toast.setBackground(DualUi.surface(0xEB1E1E20, 20, c));
+        toast.setBackground(DualUi.surface(PanelTheme.toastBg(), 20, c));
         toast.setAlpha(0f); toast.setVisibility(View.GONE);
         FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         tp.topMargin = DualUi.dp(c, 66);
@@ -75,6 +75,7 @@ final class DualSettingsView extends FrameLayout {
 
     /** 玻璃 / 平面切换后：所有已打开的页面重画 */
     void refreshAll() {
+        setBackgroundColor(PanelTheme.pageBg(getContext()));
         post(new Runnable() { @Override public void run() { for (SettingsPageView v : stack) v.rebuild(); } });
     }
 

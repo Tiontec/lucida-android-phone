@@ -7,22 +7,6 @@ import java.util.List;
 final class SettingsData {
     private SettingsData() {}
 
-    static SettingsRegistry.Collection build_style() {
-        List<SettingsRegistry.Group> groups = new ArrayList<SettingsRegistry.Group>();
-        {
-            List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
-            {
-                List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
-                opts.add(new SettingsRegistry.Option("frosted", "毛玻璃", "半透明深色 + 高光描边", "毛玻璃", false));
-                opts.add(new SettingsRegistry.Option("liquid", "液态玻璃", "自绘折射：边缘折射 + 高光（安卓 13 以下自动用毛玻璃）", "液态玻璃", false));
-                List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("glassStyle", "界面风格", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "liquid", opts, notes, "", true, false, "drop", 0, 0));
-            }
-            groups.add(new SettingsRegistry.Group("", "选择界面玻璃的样式；「界面与外观」里的开关决定要不要使用玻璃。", items));
-        }
-        return new SettingsRegistry.Collection("style", "界面风格", SettingsRegistry.K_INLINE, "", "", "", groups);
-    }
-
     static SettingsRegistry.Collection build_account() {
         List<SettingsRegistry.Group> groups = new ArrayList<SettingsRegistry.Group>();
         {
@@ -30,7 +14,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("acct", "登录账号", "登录与会员功能暂未加入", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "", false, false, "person.crop.circle", 0, 0));
+                items.add(new SettingsRegistry.Item("acct", "登录账号", "等登录与会员功能上线后开放", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "", false, false, "person.crop.circle", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }
@@ -43,10 +27,22 @@ final class SettingsData {
             List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
+                opts.add(new SettingsRegistry.Option("frosted", "毛玻璃", "半透明深色 + 高光描边", "毛玻璃", false));
+                opts.add(new SettingsRegistry.Option("liquid", "液态玻璃", "自绘折射：边缘折射 + 高光（安卓 13 以下自动用毛玻璃）", "液态玻璃", false));
+                opts.add(new SettingsRegistry.Option("plain", "默认面板", "关掉玻璃和模糊，取景和设置都用普通的深色样式（默认）", "默认面板", false));
+                List<String> notes = new ArrayList<String>();
+                items.add(new SettingsRegistry.Item("glassStyle", "界面风格", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "plain", opts, notes, "", true, false, "drop", 0, 0));
+            }
+            groups.add(new SettingsRegistry.Group("界面风格", "", items));
+        }
+        {
+            List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
+            {
+                List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 opts.add(new SettingsRegistry.Option("mid", "原中版", "默认皮肤", "原中版", false));
                 opts.add(new SettingsRegistry.Option("fish", "大肥鱼", "带角色的皮肤", "大肥鱼", false));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("skin", "外观 / 皮肤", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "mid", opts, notes, "", false, false, "paintbrush", 0, 0));
+                items.add(new SettingsRegistry.Item("skin", "外观 / 皮肤", "等皮肤功能完成后开放（原中版、大肥鱼两款皮肤）", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "mid", opts, notes, "", false, false, "paintbrush", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("皮肤", "", items));
         }
@@ -59,7 +55,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("light", "白色面板 UI", "纯白色面板，去掉玻璃和模糊，更省性能", "白色面板 UI", false));
                 List<String> notes = new ArrayList<String>();
                 notes.add("选中纯色面板后所有界面改成纯色，去掉玻璃和模糊，更省性能，适合老设备。选默认就是玻璃效果。");
-                items.add(new SettingsRegistry.Item("panelTheme", "面板样式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "glass", opts, notes, "", true, false, "rectangle.fill", 0, 0));
+                items.add(new SettingsRegistry.Item("panelTheme", "面板样式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "glass", opts, notes, "", true, false, "rectangle.fill", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("面板", "", items));
         }
@@ -68,21 +64,12 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("glass", "毛玻璃界面", "开：提示条、按钮、面板、分段选择、开关、滑条换成半透明毛玻璃样式，规格面板有果冻弹动；关：全部是普通深色样式（安卓没有苹果系统的液态玻璃，这是模拟出来的）", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, false, "drop", 0, 0));
-            }
-            groups.add(new SettingsRegistry.Group("", "", items));
-        }
-        {
-            List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
-            {
-                List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
-                List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("uiScale", "界面大小", "缩放全部界面（栏、面板、设置页、相册等；取景画面本身不变）。设置页自己最小只缩到 30%，保证你总能回来改。", SettingsRegistry.T_SLIDER, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "100", opts, notes, "", false, false, "arrow.up.left.and.arrow.down.right", 1, 200));
+                items.add(new SettingsRegistry.Item("uiScale", "界面大小", "等界面大小功能完成后开放。开放后会缩放全部界面（栏、面板、设置页、相册等；取景画面本身不变），设置页自己最小只缩到 30%。", SettingsRegistry.T_SLIDER, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "100", opts, notes, "", false, false, "arrow.up.left.and.arrow.down.right", 1, 200));
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("fontScale", "字体大小", "缩放全部界面文字。设置页里最小只缩到 30%，保证看得见。", SettingsRegistry.T_SLIDER, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "100", opts, notes, "", false, false, "textformat.size", 1, 200));
+                items.add(new SettingsRegistry.Item("fontScale", "字体大小", "等字体大小功能完成后开放。开放后会缩放全部界面文字，设置页里最小只缩到 30%。", SettingsRegistry.T_SLIDER, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "100", opts, notes, "", false, false, "textformat.size", 1, 200));
             }
             groups.add(new SettingsRegistry.Group("大小与字体", "", items));
         }
@@ -91,11 +78,11 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("uiReset", "每一次打开都重置界面大小和字体大小", "调得太大点不到设置时，重启 App 就恢复 100%", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "1", opts, notes, "", false, false, "arrow.counterclockwise", 0, 0));
+                items.add(new SettingsRegistry.Item("uiReset", "每一次打开都重置界面大小和字体大小", "等界面大小和字体大小功能完成后开放。调得太大点不到设置时，重启 App 就恢复 100%", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "1", opts, notes, "", false, false, "arrow.counterclockwise", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }
-        return new SettingsRegistry.Collection("appearance", "界面与外观", SettingsRegistry.K_PAGE, "皮肤 · 面板 · 大小 · 字体", "皮肤、面板、大小和字体的设置还在适配中，现在只有「液态玻璃 / 毛玻璃界面」能用。", "paintbrush", groups);
+        return new SettingsRegistry.Collection("appearance", "界面与外观", SettingsRegistry.K_PAGE, "皮肤 · 面板 · 大小 · 字体", "界面风格和面板样式现在可以用；皮肤、大小和字体的设置还在适配中。", "paintbrush", groups);
     }
 
     static SettingsRegistry.Collection build_shoot() {
@@ -194,11 +181,10 @@ final class SettingsData {
             List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
-                opts.add(new SettingsRegistry.Option("0", "只存实况", "只保存一张动态照片（单文件）", "只存实况", false));
-                opts.add(new SettingsRegistry.Option("1", "照片 + 视频分开", "动态照片之外，再单独存一份静态照片和一段视频", "照片 + 视频分开", false));
+                opts.add(new SettingsRegistry.Option("pair", "照片 + 视频", "实况存成一张照片和一段 3 秒视频两个文件，苹果 / 安卓都一样，都能保存", "照片 + 视频", false));
                 List<String> notes = new ArrayList<String>();
-                notes.add("安卓没有苹果那种实况照片：动态照片 = 一张 JPEG 里内嵌从按下快门开始的短视频，Google 相册等支持动态照片的相册可播放。");
-                items.add(new SettingsRegistry.Item("sLiveStill", "实况保存方式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, false, "livephoto", 0, 0));
+                notes.add("原生 App：保存时会把照片 + 视频交给系统，写成系统「实况照片」。");
+                items.add(new SettingsRegistry.Item("sLiveStill", "实况保存方式", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "pair", opts, notes, "", false, false, "livephoto", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("实况保存", "", items));
         }
@@ -230,7 +216,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("direct", "直录模式", "", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "1", opts, notes, "", false, false, "video", 0, 0));
+                items.add(new SettingsRegistry.Item("direct", "直录模式", "等直录模式完成后开放", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "1", opts, notes, "", false, false, "video", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "录像直接使用摄像头原始画面、由硬件编码，4K 与 60 帧最稳定。直录时录制中不能变焦；已放大、或所选比例与镜头原生画面不同时，会自动改用画布录制（4K 下帧率可能偏低）。", items));
         }
@@ -293,14 +279,16 @@ final class SettingsData {
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
-                opts.add(new SettingsRegistry.Option("5", "大于 5× 变焦显示取景框", "较早出现", ">5×", false));
                 opts.add(new SettingsRegistry.Option("10", "大于 10× 变焦显示取景框", "默认", ">10×", false));
-                opts.add(new SettingsRegistry.Option("20", "大于 20× 变焦显示取景框", "只在很高倍数时出现", ">20×", false));
-                opts.add(new SettingsRegistry.Option("25", "大于 25× 变焦显示取景框", "几乎只在最大倍数附近出现", ">25×", false));
-                opts.add(new SettingsRegistry.Option("off", "不显示取景框", "高倍变焦时不显示左上角的小取景框", "关闭", false));
+                opts.add(new SettingsRegistry.Option("20", "大于 20× 变焦显示取景框", "较晚出现", ">20×", false));
+                opts.add(new SettingsRegistry.Option("25", "大于 25× 变焦显示取景框", "", ">25×", false));
+                opts.add(new SettingsRegistry.Option("30", "大于 30× 变焦显示取景框", "", ">30×", false));
+                opts.add(new SettingsRegistry.Option("50", "大于 50× 变焦显示取景框", "", ">50×", false));
+                opts.add(new SettingsRegistry.Option("80", "大于 80× 变焦显示取景框", "", ">80×", false));
+                opts.add(new SettingsRegistry.Option("100", "大于 100× 变焦显示取景框", "只在最大倍数附近出现", ">100×", false));
                 List<String> notes = new ArrayList<String>();
-                notes.add("放大到设定倍数以后，取景画面左上角会出现一个小取景框：整幅画面里用黄色方框标出现在放大到的位置，方便在高倍数下找准目标。");
-                items.add(new SettingsRegistry.Item("zoomFrame", "变焦放大取景框", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "10", opts, notes, "", false, false, "viewfinder", 0, 0));
+                notes.add("放大到设定倍数后，取景画面左上角出现一个小方框，用黄色方框标出画面现在放大到的位置，方便在高倍数下找准目标。");
+                items.add(new SettingsRegistry.Item("zoomFrame", "变焦放大取景框", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "10", opts, notes, "", false, false, "viewfinder", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }
@@ -313,7 +301,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("orig", "原版（澄影 23）", "超广角 ↔ 主摄的切换方式原封不动，不预热；长焦在变焦停住后才切", "原版", false));
                 List<String> notes = new ArrayList<String>();
                 notes.add("长焦从 10× 起使用：3×~10× 之间用主摄数码放大。三种方式都能用上长焦。\n手机允许同时开多颗镜头时，「边变焦边切」和「数码接力」用「预热」瞬间换画面；iPhone 通常一次只能开一颗镜头，这时三种方式的长焦都是「变焦停住后：定格画面 → 换镜头 → 淡入」，变焦途中不会去开摄像头。往更广的方向变焦（例如 30× 退回 2×）时长焦拍不到，会立刻换。");
-                items.add(new SettingsRegistry.Item("lensSwitch", "倍率镜头切换", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "orig", opts, notes, "", false, false, "arrow.right.to.line", 0, 0));
+                items.add(new SettingsRegistry.Item("lensSwitch", "倍率镜头切换", "等倍率镜头切换功能完成后开放，下面三种切换方式都还没有接入", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "orig", opts, notes, "", false, false, "arrow.right.to.line", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "变焦到超广角 / 主摄 / 长焦（10× 起）的倍数时怎么换镜头。三颗镜头会提前同时打开待命，多耗一点电；4K 或手机不支持同时开多颗镜头时自动不启用。", items));
         }
@@ -342,7 +330,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("soft", "柔和羽化（推荐）", "接缝处按离画面中心远近柔和过渡，整体自然、没有硬接缝（第一版的效果）", "柔和羽化", false));
                 opts.add(new SettingsRegistry.Option("detail", "细节优先（两频段）", "低频柔和、细节取最近一张，近处物体更少重影，但接缝处可能出现切割线", "细节优先", false));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("panoBlend", "360° 全景拼接融合", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "soft", opts, notes, "", true, false, "waveform.path", 0, 0));
+                items.add(new SettingsRegistry.Item("panoBlend", "360° 全景拼接融合", "等全景拍摄功能完成后开放（全景拍摄暂未加入）", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "soft", opts, notes, "", true, false, "waveform.path", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("360° 全景拼接融合", "", items));
         }
@@ -356,7 +344,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("cams", "摄像头检测", "列出这台设备的所有摄像头、是否支持多摄同时工作", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "cams", false, false, "camera", 0, 0));
+                items.add(new SettingsRegistry.Item("cams", "摄像头检测", "列出这台设备的所有摄像头、是否支持多摄同时工作", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "", opts, notes, "cams", false, false, "camera", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("设备", "", items));
         }
@@ -434,7 +422,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("mirror", "前置画面镜像", "", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_DUAL, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, false, "", 0, 0));
+                items.add(new SettingsRegistry.Item("mirror", "前置画面镜像", "", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_DUAL, SettingsRegistry.S_LIVE, "1", opts, notes, "", false, false, "", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("", "", items));
         }
@@ -460,7 +448,7 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("donate", "赞赏", "支持作者", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "donate", false, false, "heart", 0, 0));
+                items.add(new SettingsRegistry.Item("donate", "赞赏", "支持作者", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "", opts, notes, "donate", false, false, "heart", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("支持", "", items));
         }
@@ -474,17 +462,17 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("log", "故障报错日志", "", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "log", false, false, "doc.text", 0, 0));
+                items.add(new SettingsRegistry.Item("log", "故障报错日志", "", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "", opts, notes, "log", false, false, "doc.text", 0, 0));
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("version", "版本更新", "{version}", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "version", false, false, "arrow.down.to.line", 0, 0));
+                items.add(new SettingsRegistry.Item("version", "版本更新", "{version}", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "", opts, notes, "version", false, false, "arrow.down.to.line", 0, 0));
             }
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("about", "关于澄影", "", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "", opts, notes, "about", false, false, "info.circle", 0, 0));
+                items.add(new SettingsRegistry.Item("about", "关于澄影", "", SettingsRegistry.T_LINK, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "", opts, notes, "about", false, false, "info.circle", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("关于", "", items));
         }
@@ -493,7 +481,6 @@ final class SettingsData {
 
     static List<SettingsRegistry.Collection> buildAll() {
         List<SettingsRegistry.Collection> all = new ArrayList<SettingsRegistry.Collection>();
-        all.add(build_style());
         all.add(build_account());
         all.add(build_appearance());
         all.add(build_shoot());
