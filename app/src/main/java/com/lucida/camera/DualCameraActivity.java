@@ -1435,6 +1435,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 @Override public void onConfigured(CameraCaptureSession cs) {
                     if (myGen != gen) { try { cs.close(); } catch (Throwable ignore) {} return; }
                     ses[cam] = cs;
+                    boolean minimal = false;      // 完整请求建不出来时置 true
                     try {
                         CaptureRequest.Builder rb = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                         rb.addTarget(s);
@@ -1450,13 +1451,16 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                             reqB[cam] = mb;
                             cs.setRepeatingRequest(mb.build(), capCallback(cam), camH);
                             AppLog.warn("相机", "完整预览请求失败，已改用最简请求：" + e);
+                            minimal = true;
                         } catch (Exception e2) { fail("error", "开启预览失败：" + e2.getMessage() + "。" + diag()); return; }
                     }
+                    final boolean usedMinimal = minimal;
                     synchronized (DualCameraActivity.this) { openedCount++; }
                     if (openedCount >= needCount()) ui.post(new Runnable() { @Override public void run() {
                         spinnerView.setVisibility(View.GONE);
                         String want = (prefs.res == 2160 ? "4K" : prefs.res + "p") + "@" + prefs.fps;
-                        say((camFps[0] < prefs.fps || effFps < prefs.fps || effTier > DualPlan.startTier(prefs.res) ? "实际规格低于所选（" + want + "）：" : "实际规格：") + infoText);
+                        say((camFps[0] < prefs.fps || effFps < prefs.fps || effTier > DualPlan.startTier(prefs.res) ? "实际规格低于所选（" + want + "）：" : "实际规格：") + infoText
+                                + (usedMinimal ? "（这台手机不接受完整相机参数，已用基础参数打开：点按对焦 / 曝光补偿 / 手电筒可能受限）" : ""));
                     } });
                 }
                 @Override public void onConfigureFailed(CameraCaptureSession cs) {

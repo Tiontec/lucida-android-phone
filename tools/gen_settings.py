@@ -369,12 +369,27 @@ def gen_java():
     w("}")
     return "\n".join(L) + "\n"
 
+def targets(root):
+    """自动识别：
+       - 根目录里同时有 ios/ 和 android/（合并目录）→ 两边都写；
+       - 根目录本身就是 iOS 工程（有 Rebuild/Sources）→ 只写 iOS；
+       - 根目录本身就是安卓工程（有 app/src/main/java/com/lucida/camera）→ 只写安卓。"""
+    out = []
+    ios_dir = os.path.join(root, "Rebuild/Sources")
+    and_dir = os.path.join(root, "app/src/main/java/com/lucida/camera")
+    if os.path.isdir(ios_dir): out.append((os.path.join(ios_dir, "SettingsData.swift"), gen_swift))
+    if os.path.isdir(and_dir): out.append((os.path.join(and_dir, "SettingsData.java"), gen_java))
+    ios2 = os.path.join(root, "ios/Rebuild/Sources"); and2 = os.path.join(root, "android/app/src/main/java/com/lucida/camera")
+    if os.path.isdir(ios2): out.append((os.path.join(ios2, "SettingsData.swift"), gen_swift))
+    if os.path.isdir(and2): out.append((os.path.join(and2, "SettingsData.java"), gen_java))
+    return out
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
-    sw = os.path.join(root, "ios/Rebuild/Sources/SettingsData.swift")
-    jv_ = os.path.join(root, "android/app/src/main/java/com/lucida/camera/SettingsData.java")
-    for p, g in ((sw, gen_swift), (jv_, gen_java)):
-        os.makedirs(os.path.dirname(p), exist_ok=True)
+    outs = targets(root)
+    if not outs:
+        print("在 %s 下没找到 iOS（Rebuild/Sources）或安卓（app/src/main/java/com/lucida/camera）工程目录" % root); sys.exit(1)
+    for p, g in outs:
         open(p, "w", encoding="utf-8").write(g())
         print("写入", p)
 

@@ -5,7 +5,7 @@
 生成两端共用的常量文件（运行时不读 json）：
   iOS     : ios/Rebuild/Sources/ContentData.swift
   Android : android/app/src/main/java/com/lucida/camera/ContentData.java
-用法：python3 tools/gen_content.py <工程根目录>   （根目录里有 ios 和 android 两个文件夹）
+用法：python3 tools/gen_content.py <工程根目录>   （根目录是 iOS 或安卓工程本身，或者同时包含 ios/ 和 android/ 两个文件夹）
 改文案：改 content_src 里的 json，再运行本脚本。
 """
 import json, os, re, sys
@@ -144,12 +144,16 @@ def gen_java():
 
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "."
-    outs = [
-        (os.path.join(root, "ios/Rebuild/Sources/ContentData.swift"), gen_swift),
-        (os.path.join(root, "android/app/src/main/java/com/lucida/camera/ContentData.java"), gen_java),
-    ]
+    outs = []
+    # 单个工程：根目录本身就是 iOS 或安卓工程
+    if os.path.isdir(os.path.join(root, "Rebuild/Sources")): outs.append((os.path.join(root, "Rebuild/Sources/ContentData.swift"), gen_swift))
+    if os.path.isdir(os.path.join(root, "app/src/main/java/com/lucida/camera")): outs.append((os.path.join(root, "app/src/main/java/com/lucida/camera/ContentData.java"), gen_java))
+    # 合并目录：根目录下有 ios/ 和 android/
+    if os.path.isdir(os.path.join(root, "ios/Rebuild/Sources")): outs.append((os.path.join(root, "ios/Rebuild/Sources/ContentData.swift"), gen_swift))
+    if os.path.isdir(os.path.join(root, "android/app/src/main/java/com/lucida/camera")): outs.append((os.path.join(root, "android/app/src/main/java/com/lucida/camera/ContentData.java"), gen_java))
+    if not outs:
+        print("在 %s 下没找到 iOS 或安卓工程目录" % root); sys.exit(1)
     for p, g in outs:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
         open(p, "w", encoding="utf-8").write(g())
         print("写入", p)
 
