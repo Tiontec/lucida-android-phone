@@ -18,6 +18,20 @@ final class ContentData {
         List<UpdateEntry> all = new ArrayList<UpdateEntry>();
         {
             List<UpdateItem> it = new ArrayList<UpdateItem>();
+            it.add(new UpdateItem("相册", "iOS 相册显示系统相册里全部的照片和视频（新的在前，最多 2000 条）；安卓同样，但需要授权读取照片和视频（授权后重新打开相册）。删除会同时删掉系统相册里的那一份。"));
+            it.add(new UpdateItem("设置页刷新率", "设置页打开时，安卓把屏幕刷新率提到这台手机的最高值（120Hz 机型）；关闭设置后恢复。iOS 本来就开了 120Hz。"));
+            it.add(new UpdateItem("液态玻璃参数", "安卓液态玻璃的调参集中到一处（边缘弯曲范围、位移、立体感、高光），方便测后调整。"));
+            all.add(new UpdateEntry("2.4.0", "2026-11-25", "new", it));
+        }
+        {
+            List<UpdateItem> it = new ArrayList<UpdateItem>();
+            it.add(new UpdateItem("安卓：液态玻璃（新）", "用液态玻璃技能包的算法重做了折射：圆角边缘折射 + 左上高光，安卓 13 及以上可用，低版本自动用固态玻璃。"));
+            it.add(new UpdateItem("安卓：固态玻璃", "上一版的液态玻璃改名为「固态玻璃」，效果和代码不变。在设置 → 界面与外观 → 界面风格里选择。"));
+            it.add(new UpdateItem("iOS", "没有改动，版本号同步。"));
+            all.add(new UpdateEntry("2.3.0", "2026-11-25", "new", it));
+        }
+        {
+            List<UpdateItem> it = new ArrayList<UpdateItem>();
             it.add(new UpdateItem("实况更稳", "拍照的 4K 合成改用独立的图像上下文，不再和取景、实况抢同一个处理器；编码器卡住时不再清空正在等的实况画面（连拍后面几张失败的主要原因）；收尾等待从 1.5 秒延长到 4 秒，5 秒实况不再被截成 3 秒。每张实况会记一条日志（取到几帧、多少秒），录短了会有警告。"));
             it.add(new UpdateItem("变焦扩充到 100×", "硬件变焦到顶后，剩下的倍数用软件裁剪放大（取景、录像、拍照、实况都一样，画质会下降）。主页变焦条和转盘可以滑到设置里选的倍数（30× / 50× / 80× / 100×）。"));
             it.add(new UpdateItem("图标与开屏", "应用图标换成新设计，四角的黑边补成玻璃颜色；开屏图去掉黑色描边，背景与深色界面衔接。安卓同步更新。"));

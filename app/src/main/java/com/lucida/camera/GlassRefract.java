@@ -45,7 +45,7 @@ final class GlassRefract {
     private final Path clip = new Path();
     private final RectF rf = new RectF();
 
-    private static final class Slot { Bitmap crop; int w, h; float[] verts; int mw, mh; }
+    private static final class Slot { Bitmap crop; int w, h; float[] verts; int mw, mh; Bitmap pad; float ml, mt, innerW, innerH; }
 
     void attach(SurfaceView s) { sv = s; bmp = null; }
     void detach() { sv = null; bmp = null; slots.clear(); ticking = false; ui.removeCallbacksAndMessages(null); }
@@ -92,6 +92,15 @@ final class GlassRefract {
             w = Math.min(w, bmp.getWidth() - cx); h = Math.min(h, bmp.getHeight() - cy);
             if (w < 2 || h < 2 || x0 + w < 0 || y0 + h < 0 || x0 > bmp.getWidth() || y0 > bmp.getHeight()) { sl.crop = null; continue; }
             try { sl.crop = Bitmap.createBitmap(bmp, cx, cy, w, h); } catch (Throwable t) { sl.crop = null; }
+            // 带边距的小图（给新液态玻璃用）：边距 8dp，比最大折射位移大
+            try {
+                float dens = v.getResources().getDisplayMetrics().density;
+                int mp = Math.round(8f * dens * kx);
+                int l = Math.max(0, cx - mp), t = Math.max(0, cy - mp);
+                int rr = Math.min(bmp.getWidth(), cx + w + mp), bb = Math.min(bmp.getHeight(), cy + h + mp);
+                sl.pad = Bitmap.createBitmap(bmp, l, t, rr - l, bb - t);
+                sl.ml = cx - l; sl.mt = cy - t; sl.innerW = w; sl.innerH = h;
+            } catch (Throwable t) { sl.pad = null; }
             v.invalidate();
         }
     }
@@ -113,6 +122,10 @@ final class GlassRefract {
         if (sl.verts == null || sl.mw != mw || sl.mh != mh || sl.w != Math.round(w) || sl.h != Math.round(h)) {
             sl.mw = mw; sl.mh = mh; sl.w = Math.round(w); sl.h = Math.round(h);
             sl.verts = lensMesh(w, h, mw, mh);
+        }
+        // 新的液态玻璃（AGSL）：只在选了「液态玻璃」且系统 13 及以上时用；否则走下面的固态玻璃
+        if ("liquid2".equals(DualUi.glassStyle) && GlassSdf.supported() && sl.pad != null) {
+            if (GlassSdf.draw(c, sl.pad, sl.ml, sl.mt, sl.innerW, sl.innerH, w, h, r, host.getResources().getDisplayMetrics().density)) return true;
         }
         rf.set(0, 0, w, h);
         clip.reset(); clip.addRoundRect(rf, r, r, Path.Direction.CW);

@@ -1,6 +1,7 @@
 package com.lucida.camera;
 
 import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -92,7 +93,48 @@ final class DualLibrary {
             out.add(e);
         }
         remove(c, gone);
+        // 系统相册里的其它照片 / 视频（需要读媒体权限；没授权就只显示澄影拍的）
+        if (canReadSystem(c)) appendSystem(c, out, all);
         return out;
+    }
+
+    /** 读系统相册需要的权限（安卓 13 以上是 READ_MEDIA_*，以下是 READ_EXTERNAL_STORAGE） */
+    static String[] readPerms() {
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            return new String[]{android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VIDEO};
+        return new String[]{android.Manifest.permission.READ_EXTERNAL_STORAGE};
+    }
+
+    static boolean canReadSystem(Context c) {
+        for (String p : readPerms()) {
+            if (c.checkSelfPermission(p) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
+        }
+        return true;
+    }
+
+    /** 按时间倒序把系统相册里不是澄影拍的照片 / 视频追加到 out（最多 2000 条；不做动态照片检测，省时间） */
+    private static void appendSystem(Context c, ArrayList<Entry> out, ArrayList<String> known) {
+        java.util.HashSet<String> seen = new java.util.HashSet<String>(known);
+        for (Entry e : out) seen.add(e.id);
+        Uri files = MediaStore.Files.getContentUri("external");
+        String[] proj = {MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.MEDIA_TYPE};
+        String sel = MediaStore.Files.FileColumns.MEDIA_TYPE + "=? OR " + MediaStore.Files.FileColumns.MEDIA_TYPE + "=?";
+        String[] args = {String.valueOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE), String.valueOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO)};
+        try (Cursor q = c.getContentResolver().query(files, proj, sel, args, MediaStore.Files.FileColumns.DATE_ADDED + " DESC")) {
+            if (q == null) return;
+            int n = 0;
+            while (q.moveToNext() && n < 2000) {
+                long rid = q.getLong(0); int mt = q.getInt(1);
+                boolean video = mt == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO;
+                Uri base = video ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                Uri u = ContentUris.withAppendedId(base, rid);
+                String id = u.toString();
+                if (seen.contains(id)) continue;
+                seen.add(id);
+                Entry e = new Entry(); e.id = id; e.uri = u; e.video = video;
+                out.add(e); n++;
+            }
+        } catch (Exception ignore) { }
     }
 
     private static final Pattern OFFSET = Pattern.compile("MicroVideoOffset=\"(\\d+)\"");

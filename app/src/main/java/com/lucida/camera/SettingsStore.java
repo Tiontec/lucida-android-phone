@@ -75,7 +75,15 @@ final class SettingsStore {
             } catch (Throwable ignore) { }
         }
         // 没存过界面风格：按旧的「液态玻璃界面」开关推导（开 = 液态玻璃，关 = 默认面板），旧用户外观不变
-        if (id.equals("glassStyle")) return p.glass ? "liquid" : "plain";
+        if (id.equals("glassStyle")) {
+            // 旧版存的 "liquid" 就是现在的「固态玻璃」，读出来统一改成 "solid"（外观不变）
+            try {
+                String raw = p.sp.getString("glassStyle", null);
+                if ("liquid".equals(raw)) return "solid";
+                if (raw != null && valid(id, raw)) return raw;
+            } catch (Throwable ignore) { }
+            return p.glass ? "solid" : "plain";   // 没存过：沿用旧的「液态玻璃」开关推导（开 = 固态玻璃）
+        }
         // ── 新增的键 ──
         try {
             Object o = p.sp.getAll().get(id);

@@ -16,8 +16,8 @@ final class DualUi {
     static final int YELLOW = 0xFFFFD60A;
     /** 毛玻璃界面（半透明 + 高光描边）；安卓没有系统液态玻璃，这是用绘制模拟的 */
     static boolean glass = false;
-    /** 玻璃样式（设置 → 界面风格）：frosted = 毛玻璃；liquid = 液态玻璃（自绘折射，小控件拿取景画面做透镜） */
-    static String glassStyle = "liquid";
+    /** 玻璃样式（设置 → 界面风格，安卓）：frosted = 毛玻璃；solid = 固态玻璃（上一版的液态玻璃：取景画面 mesh 折弯）；liquid2 = 液态玻璃（新：SDF 折射，AGSL，安卓 13 及以上）；plain = 默认面板 */
+    static String glassStyle = "plain";
     /** 设置里「面板样式」是不是默认（玻璃）；选了黑色 / 白色纯色时相机界面的玻璃改成深色纯色 */
     static boolean panelGlass = true;
     static boolean liquid() { return glass && panelGlass && !"frosted".equals(glassStyle); }

@@ -50,6 +50,10 @@ final class DualAlbum extends FrameLayout {
 
     DualAlbum(final Context c, Host host, Runnable onClose, Runnable onImport) {
         super(c);
+        // 没有读媒体权限：申请一次（授权后重新打开相册，就能看到系统相册里的全部照片）
+        if (!DualLibrary.canReadSystem(c) && c instanceof android.app.Activity) {
+            try { ((android.app.Activity) c).requestPermissions(DualLibrary.readPerms(), 4417); } catch (Throwable ignore) { }
+        }
         this.host = host; this.onClose = onClose; this.onImport = onImport;
         setBackgroundColor(Color.BLACK);
         setClickable(true);

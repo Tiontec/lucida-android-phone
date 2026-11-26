@@ -28,7 +28,8 @@ final class SettingsData {
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 opts.add(new SettingsRegistry.Option("frosted", "毛玻璃", "半透明深色 + 高光描边", "毛玻璃", false));
-                opts.add(new SettingsRegistry.Option("liquid", "液态玻璃", "自绘折射：边缘折射 + 高光（安卓 13 以下自动用毛玻璃）", "液态玻璃", false));
+                opts.add(new SettingsRegistry.Option("solid", "固态玻璃", "上一版的液态玻璃：取景画面按透镜折弯（原样保留）", "固态玻璃", false));
+                opts.add(new SettingsRegistry.Option("liquid2", "液态玻璃", "新：SDF 圆角折射 + 边缘高光（安卓 13 及以上；低版本自动用固态玻璃）", "液态玻璃", false));
                 opts.add(new SettingsRegistry.Option("plain", "默认面板", "关掉玻璃和模糊，取景和设置都用普通的深色样式（默认）", "默认面板", false));
                 List<String> notes = new ArrayList<String>();
                 items.add(new SettingsRegistry.Item("glassStyle", "界面风格", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "plain", opts, notes, "", true, false, "drop", 0, 0));

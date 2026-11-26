@@ -181,7 +181,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         ui = new Handler(Looper.getMainLooper());
         prefs = new DualPrefs(this);
         gradeBack.load(prefs.sp, "g_"); gradeFront.load(prefs.sp, "gf_");
-        DualUi.glass = prefs.glass; DualUi.glassStyle = prefs.sp.getString("glassStyle", "liquid"); lastStyle = DualUi.glassStyle; DualUi.panelGlass = PanelTheme.isGlass(this); lastPanelGlass = DualUi.panelGlass;
+        DualUi.glass = prefs.glass; DualUi.glassStyle = prefs.sp.getString("glassStyle", "plain"); lastStyle = DualUi.glassStyle; DualUi.panelGlass = PanelTheme.isGlass(this); lastPanelGlass = DualUi.panelGlass;
         state.style = prefs.style; state.mirrorFront = prefs.mirror; state.pipW = prefs.pipW;
         videoMode = "video".equals(getIntent().getStringExtra("mode"));
         dual = prefs.dualOn;

@@ -143,8 +143,32 @@ final class DualSettingsView extends FrameLayout {
         return super.onApplyWindowInsets(in);
     }
 
+    /** 设置页打开时把窗口刷新率提到这台机器的最高值（120Hz 机型会用 120Hz）；关闭时还原 */
+    private void boostRefresh(boolean on) {
+        try {
+            Context c = getContext();
+            if (!(c instanceof android.app.Activity)) return;
+            android.app.Activity act = (android.app.Activity) c;
+            android.view.WindowManager.LayoutParams a = act.getWindow().getAttributes();
+            if (on) {
+                float max = 0f;
+                for (float r : act.getWindowManager().getDefaultDisplay().getSupportedRefreshRates()) max = Math.max(max, r);
+                a.preferredRefreshRate = max;
+            } else {
+                a.preferredRefreshRate = 0f;
+            }
+            act.getWindow().setAttributes(a);
+        } catch (Throwable ignore) { }
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        boostRefresh(false);
+        super.onDetachedFromWindow();
+    }
+
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        boostRefresh(true);
         requestApplyInsets();            // 后加进来的 overlay 要主动要一次系统栏边距
         post(new Runnable() { @Override public void run() { requestFocus(); } });
     }
