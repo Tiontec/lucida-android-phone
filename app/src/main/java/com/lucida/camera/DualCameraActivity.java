@@ -120,6 +120,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     // 界面
     private FrameLayout root, bottomBar, stageTouch;
+    private DualZoomMini zoomMini;          // 变焦放大取景框（左上角）
     private ZoomBar zoomBar;
     private DualIcon btnBack, btnLive, btnPalette, btnSettings, btnLayout, btnShape, btnMirror, btnTorch, btnSwap, btnMore;
     private TextView specPill, tabPhoto, tabVideo, toast, timer, readout, presetLabel;
@@ -343,9 +344,13 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
         zoomBar = new ZoomBar(this);
         zoomBar.setListener(new ZoomBar.Listener() { @Override public void onZoom(float z) {
-            int c = mainCam(); zoomCur[c] = z; if (c == 0) maybeSwitchLens(z); applyZoom(c);
+            int c = mainCam(); zoomCur[c] = z; if (c == 0) maybeSwitchLens(z); applyZoom(c); updateZoomMini();
         } });
         root.addView(zoomBar);
+        zoomMini = new DualZoomMini(this);
+        android.widget.FrameLayout.LayoutParams zlp = new android.widget.FrameLayout.LayoutParams(DualUi.dp(this, 84), DualUi.dp(this, 56), android.view.Gravity.TOP | android.view.Gravity.LEFT);
+        zlp.leftMargin = DualUi.dp(this, 14); zlp.topMargin = DualUi.dp(this, 96);
+        root.addView(zoomMini, zlp);
 
         // 顶部：返回 + 规格胶囊 | 实况 · 调色盘 · 设置
         btnBack = icon(DualIcon.BACK, new View.OnClickListener() { @Override public void onClick(View v) { closeTapped(); } });
@@ -1262,6 +1267,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         clearFocusAll();
         syncButtons(); syncDial(); restart();
         say(on ? "正在开启双摄…（这台手机不支持时会自动退回单摄）" : "已切换到单摄");
+    }
+
+    /** 变焦放大取景框：按当前变焦和设置里的档位刷新 */
+    private void updateZoomMini() {
+        if (zoomMini == null) return;
+        zoomMini.update(zoomCur[mainCam()], new SettingsStore(prefs).intValue("zoomFrame"));
     }
 
     private void syncDial() {
