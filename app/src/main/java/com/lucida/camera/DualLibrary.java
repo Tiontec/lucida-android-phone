@@ -1,6 +1,7 @@
 package com.lucida.camera;
 
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -55,6 +56,41 @@ final class DualLibrary {
         JSONArray a = new JSONArray();
         for (String s : l) a.put(s);
         c.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY, a.toString()).apply();
+    }
+
+    /** 导入：从系统文件选择器拿到的照片 / 视频，复制进 Pictures/澄影（照片 / 视频库），并记入澄影列表 */
+    static void importUris(Context c, android.content.Intent data) {
+        ArrayList<Uri> list = new ArrayList<Uri>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) list.add(data.getClipData().getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            list.add(data.getData());
+        }
+        ContentResolver cr = c.getContentResolver();
+        for (Uri src : list) {
+            try {
+                String mime = cr.getType(src);
+                if (mime == null) mime = "image/jpeg";
+                boolean video = mime.startsWith("video/");
+                String name = "澄影导入_" + System.currentTimeMillis();
+                try (Cursor q = cr.query(src, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (q != null && q.moveToFirst()) name = q.getString(0);
+                }
+                ContentValues cv = new ContentValues();
+                cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                if (android.os.Build.VERSION.SDK_INT >= 29) cv.put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/澄影");
+                Uri base = video ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                Uri dst = cr.insert(base, cv);
+                if (dst == null) continue;
+                try (InputStream in = cr.openInputStream(src); java.io.OutputStream out = cr.openOutputStream(dst)) {
+                    byte[] b = new byte[65536];
+                    int n;
+                    while ((n = in.read(b)) > 0) out.write(b, 0, n);
+                }
+                add(c, dst);
+            } catch (Exception ignore) { }
+        }
     }
 
     static synchronized void add(Context c, Uri u) {

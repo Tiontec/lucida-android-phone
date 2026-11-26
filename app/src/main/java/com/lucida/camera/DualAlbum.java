@@ -48,6 +48,9 @@ final class DualAlbum extends FrameLayout {
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(60);
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    /** 当前打开着的相册（导入完成后用来刷新） */
+    private static java.lang.ref.WeakReference<DualAlbum> OPEN;
+
     DualAlbum(final Context c, Host host, Runnable onClose, Runnable onImport) {
         super(c);
         // 没有读媒体权限：申请一次（授权后重新打开相册，就能看到系统相册里的全部照片）
@@ -55,6 +58,7 @@ final class DualAlbum extends FrameLayout {
             try { ((android.app.Activity) c).requestPermissions(DualLibrary.readPerms(), 4417); } catch (Throwable ignore) { }
         }
         this.host = host; this.onClose = onClose; this.onImport = onImport;
+        OPEN = new java.lang.ref.WeakReference<DualAlbum>(this);
         setBackgroundColor(Color.BLACK);
         setClickable(true);
         LinearLayout col = new LinearLayout(c); col.setOrientation(LinearLayout.VERTICAL);
@@ -72,7 +76,7 @@ final class DualAlbum extends FrameLayout {
         selectBtn.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { toggleSelect(); } });
         TextView imp = DualUi.label(c, "导入", 16, DualUi.YELLOW);
         imp.setPadding(DualUi.dp(c, 12), DualUi.dp(c, 8), DualUi.dp(c, 16), DualUi.dp(c, 8));
-        imp.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { DualAlbum.this.onImport.run(); } });
+        imp.setOnClickListener(new OnClickListener() { @Override public void onClick(View v) { DualAlbum.this.startImport(); } });
         right.addView(selectBtn); right.addView(imp);
         bar.addView(right, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
 
@@ -156,6 +160,25 @@ final class DualAlbum extends FrameLayout {
                 else host.requestDelete(need, after);
             } });
         } }).start();
+    }
+
+    /** 「导入」：打开系统文件选择器（照片 + 视频，可多选）。结果在 DualCameraActivity.onActivityResult 里处理 */
+    private void startImport() {
+        android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(android.content.Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+        i.putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try { ((android.app.Activity) getContext()).startActivityForResult(i, 4418); } catch (Throwable ignore) { }
+    }
+
+    /** 导入完成后：如果相册还开着，重新读一遍列表 */
+    static void refreshIfOpen() {
+        DualAlbum a = OPEN == null ? null : OPEN.get();
+        if (a == null) return;
+        a.entries.clear();
+        a.entries.addAll(DualLibrary.load(a.getContext()));
+        a.layoutGrid();
     }
 
     private void layoutGrid() {

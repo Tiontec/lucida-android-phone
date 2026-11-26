@@ -18,6 +18,11 @@ final class ContentData {
         List<UpdateEntry> all = new ArrayList<UpdateEntry>();
         {
             List<UpdateItem> it = new ArrayList<UpdateItem>();
+            it.add(new UpdateItem("相册导入", "相册右上角「导入」现在是从系统相册或文件里选照片和视频（可多选），复制进澄影自己的存储，并出现在澄影相册里（带橙框）。之前的「导入」是把本次拍的照片导入澄影，已经改掉。"));
+            all.add(new UpdateEntry("2.7.0", "2026-11-26", "new", it));
+        }
+        {
+            List<UpdateItem> it = new ArrayList<UpdateItem>();
             it.add(new UpdateItem("变焦放大取景框", "设置 → 变焦放大取景框 选的档位（10 / 20 / 25 / 30 / 50 / 80 / 100）以上，相机左上角出现小框，用黄框标出现在放大到的位置。两端都有。"));
             all.add(new UpdateEntry("2.6.0", "2026-11-26", "new", it));
         }

@@ -775,6 +775,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == 4418 && res == RESULT_OK && data != null) { DualLibrary.importUris(this, data); DualAlbum.refreshIfOpen(); return; }
         if (req == REQ_DEL && delDone != null) { Runnable r = delDone; delDone = null; r.run(); }
     }
 
