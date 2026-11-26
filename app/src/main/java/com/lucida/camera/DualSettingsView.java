@@ -71,7 +71,10 @@ final class DualSettingsView extends FrameLayout {
     // ───────────── 给各页用的操作 ─────────────
 
     /** 设置改了：通知相机界面（reconfigure = 需要重配摄像头） */
-    void changed(boolean reconfigure) { host.onChanged(reconfigure); }
+    void changed(boolean reconfigure) {
+        if (getParent() instanceof android.view.ViewGroup) DualUi.applySkin(getContext(), (android.view.ViewGroup) getParent());
+        host.onChanged(reconfigure);
+    }
 
     /** 玻璃 / 平面切换后：所有已打开的页面重画 */
     void refreshAll() {

@@ -114,6 +114,18 @@ final class ZoomBar extends View {
             ticks.add(t);
             v = k < 2 ? k + .1 : k < 5 ? k + .2 : k < 10 ? k + .5 : k < 30 ? k + 1 : k < 50 ? k + 5 : k + 10;
         }
+        // 递推的步长跳过了 100（30→31→36→…→91→101）：把主刻度里缺的补上，再按对数位置排好
+        for (double m : majs) {
+            boolean have = false;
+            for (Tick t : ticks) if (Math.abs(Math.exp(t.l) - m) < 1e-6) { have = true; t.maj = true; break; }
+            if (!have && m >= lo - 1e-6 && m <= zMax + .001) {
+                Tick t = new Tick();
+                t.l = Math.log(m); t.maj = true; t.txt = fmtNum(m); t.mm = mmOf(m);
+                ticks.add(t);
+            }
+        }
+        java.util.Collections.sort(ticks, new java.util.Comparator<Tick>() {
+            @Override public int compare(Tick a, Tick b) { return Double.compare(a.l, b.l); } });
     }
 
     private static String fmtNum(double k) {

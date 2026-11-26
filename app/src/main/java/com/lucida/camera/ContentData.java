@@ -18,6 +18,13 @@ final class ContentData {
         List<UpdateEntry> all = new ArrayList<UpdateEntry>();
         {
             List<UpdateItem> it = new ArrayList<UpdateItem>();
+            it.add(new UpdateItem("变焦条 100 刻度", "设置里选 100× 后，主页的变焦条和转盘都有 100 的刻度（之前递推时跳过了 100）。"));
+            it.add(new UpdateItem("皮肤", "设置 → 外观 → 皮肤 可以选「大肥鱼」：蓝色强调色、深蓝背景、吉祥物图。原中版不变。"));
+            it.add(new UpdateItem("相册橙框", "澄影拍的照片和视频在相册里有橙色细框，方便区分系统相册里的其它内容。"));
+            all.add(new UpdateEntry("2.5.0", "2026-11-26", "new", it));
+        }
+        {
+            List<UpdateItem> it = new ArrayList<UpdateItem>();
             it.add(new UpdateItem("相册", "iOS 相册显示系统相册里全部的照片和视频（新的在前，最多 2000 条）；安卓同样，但需要授权读取照片和视频（授权后重新打开相册）。删除会同时删掉系统相册里的那一份。"));
             it.add(new UpdateItem("设置页刷新率", "设置页打开时，安卓把屏幕刷新率提到这台手机的最高值（120Hz 机型）；关闭设置后恢复。iOS 本来就开了 120Hz。"));
             it.add(new UpdateItem("液态玻璃参数", "安卓液态玻璃的调参集中到一处（边缘弯曲范围、位移、立体感、高光），方便测后调整。"));

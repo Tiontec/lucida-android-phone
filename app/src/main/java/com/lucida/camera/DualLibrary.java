@@ -36,6 +36,7 @@ final class DualLibrary {
         String id;                   // = uri 字符串
         Uri uri;
         boolean video, live;
+        boolean system;              // 系统相册里的（不是澄影拍的）：相册里不加橙框
         long videoLen;               // 动态照片：内嵌视频的字节数（从文件末尾往回数）
     }
 
@@ -131,7 +132,7 @@ final class DualLibrary {
                 String id = u.toString();
                 if (seen.contains(id)) continue;
                 seen.add(id);
-                Entry e = new Entry(); e.id = id; e.uri = u; e.video = video;
+                Entry e = new Entry(); e.id = id; e.uri = u; e.video = video; e.system = true;
                 out.add(e); n++;
             }
         } catch (Exception ignore) { }

@@ -13,7 +13,7 @@ final class DualUi {
     private DualUi() {}
     interface IntCb { void on(int i); }
     interface BoolCb { void on(boolean v); }
-    static final int YELLOW = 0xFFFFD60A;
+    static int YELLOW = 0xFFFFD60A;     // 强调色：原中版黄色；大肥鱼蓝色（皮肤切换时由 SettingsStore 更新）
     /** 毛玻璃界面（半透明 + 高光描边）；安卓没有系统液态玻璃，这是用绘制模拟的 */
     static boolean glass = false;
     /** 玻璃样式（设置 → 界面风格，安卓）：frosted = 毛玻璃；solid = 固态玻璃（上一版的液态玻璃：取景画面 mesh 折弯）；liquid2 = 液态玻璃（新：SDF 折射，AGSL，安卓 13 及以上）；plain = 默认面板 */
@@ -121,5 +121,44 @@ final class DualUi {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.topMargin = dp(c, 10);
         col.addView(body, lp);
         return col;
+    }
+
+    // ───────── 皮肤（设置 → 外观 → 皮肤）─────────
+    /** 大肥鱼的吉祥物（由 applySkin 加到根布局上） */
+    private static android.widget.ImageView skinMasc;
+
+    /** 按当前皮肤设置强调色、根背景和吉祥物。skin：mid = 原中版（黄色、黑底）；fish = 大肥鱼（蓝色、深蓝底 + 吉祥物） */
+    static void applySkin(Context c, android.view.ViewGroup root) {
+        boolean fish = "fish".equals(c.getSharedPreferences("lucida_dual", Context.MODE_PRIVATE).getString("skin", "mid"));
+        YELLOW = fish ? 0xFF7FB6FF : 0xFFFFD60A;
+        if (root != null) root.setBackgroundColor(fish ? 0xFF060A18 : 0xFF000000);
+        if (root == null) return;
+        if (fish) {
+            if (skinMasc == null) {
+                skinMasc = new android.widget.ImageView(c);
+                skinMasc.setImageResource(R.drawable.skinmasc);
+                skinMasc.setScaleType(android.widget.ImageView.ScaleType.FIT_START);
+                skinMasc.setClickable(false);
+            }
+            if (skinMasc.getParent() != root) {
+                if (skinMasc.getParent() != null) ((android.view.ViewGroup) skinMasc.getParent()).removeView(skinMasc);
+                android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(dp(c, 96), dp(c, 96 * 287 / 460), android.view.Gravity.BOTTOM | android.view.Gravity.LEFT);
+                lp.leftMargin = dp(c, 12); lp.bottomMargin = dp(c, 150);
+                root.addView(skinMasc, lp);
+            }
+            skinMasc.setVisibility(android.view.View.VISIBLE);
+            skinMasc.bringToFront();
+        } else if (skinMasc != null) {
+            skinMasc.setVisibility(android.view.View.GONE);
+        }
+    }
+
+    /** 相册里澄影拍的格子用的橙色细框（克劳德主题色 #FF8A3D，2.5 dp 描边，圆角 3 dp） */
+    static android.graphics.drawable.GradientDrawable mineFrame(Context c) {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(0x00000000);
+        g.setStroke(Math.max(1, dp(c, 2.5f)), 0xFFFF8A3D);
+        g.setCornerRadius(dp(c, 3));
+        return g;
     }
 }

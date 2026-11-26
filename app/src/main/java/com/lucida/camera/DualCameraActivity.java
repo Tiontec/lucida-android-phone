@@ -279,6 +279,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private void buildUi() {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        DualUi.applySkin(this, root);
         sv = new SurfaceView(this);
         GlassRefract.I.attach(sv);
         sv.getHolder().addCallback(this);

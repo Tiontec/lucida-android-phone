@@ -43,7 +43,7 @@ final class SettingsData {
                 opts.add(new SettingsRegistry.Option("mid", "原中版", "默认皮肤", "原中版", false));
                 opts.add(new SettingsRegistry.Option("fish", "大肥鱼", "带角色的皮肤", "大肥鱼", false));
                 List<String> notes = new ArrayList<String>();
-                items.add(new SettingsRegistry.Item("skin", "外观 / 皮肤", "等皮肤功能完成后开放（原中版、大肥鱼两款皮肤）", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_SOON, "mid", opts, notes, "", false, false, "paintbrush", 0, 0));
+                items.add(new SettingsRegistry.Item("skin", "外观 / 皮肤", "", SettingsRegistry.T_RADIO, SettingsRegistry.SC_BOTH, SettingsRegistry.S_LIVE, "mid", opts, notes, "", false, false, "paintbrush", 0, 0));
             }
             groups.add(new SettingsRegistry.Group("皮肤", "", items));
         }

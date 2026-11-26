@@ -169,6 +169,7 @@ final class DualAlbum extends FrameLayout {
             final DualLibrary.Entry e = entries.get(k);
             final int pos = k;
             final ImageView iv = new ImageView(c); iv.setScaleType(ImageView.ScaleType.CENTER_CROP); iv.setBackgroundColor(0xFF262626);
+            iv.setForeground(e.system ? null : DualUi.mineFrame(c));   // 澄影拍的：橙色细框（克劳德主题色 #FF8A3D）
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams(); lp.width = cell; lp.height = cell; lp.setMargins(gap / 2, gap / 2, gap / 2, gap / 2);
             final FrameLayout box = new FrameLayout(c);
             box.addView(iv, new FrameLayout.LayoutParams(-1, -1));
