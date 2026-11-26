@@ -100,6 +100,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
     private String failCode, failMsg;
     // 每个摄像头各记各的倍数（0 = 后置，1 = 前置）；转盘控制当前「主画面」的那个
     private final float[] zoomMin = {1f, 1f}, zoomMax = {1f, 1f}, zoomCur = {1f, 1f};
+    private final float[] hwMax = {1f, 1f};        // 硬件能做到的最大变焦（超出的部分用软件裁剪补，见 fillReq）
     private final Rect[] activeArr = new Rect[2];
     private final CaptureRequest.Builder[] reqB = new CaptureRequest.Builder[2];
     private final int[] camFps = {30, 30};
@@ -1088,7 +1089,9 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 hi = m == null ? 1f : m; lo = 1f;
             }
             zoomMin[cam] = Math.max(0.1f, lo);
-            zoomMax[cam] = Math.max(zoomMin[cam], Math.min(hi, (float) Math.max(30, new SettingsStore(prefs).zoomRange())));
+            hwMax[cam] = hi;
+            float setMax = (float) Math.max(30, new SettingsStore(prefs).zoomRange());
+            zoomMax[cam] = Math.max(zoomMin[cam], cam == 0 ? setMax : Math.min(setMax, 10f));
             if (initZoom) zoomCur[cam] = Math.max(zoomMin[cam], Math.min(zoomMax[cam], 1f));
             Integer so = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
             senOri[cam] = so == null ? (cam == 0 ? 90 : 270) : so;
@@ -1495,8 +1498,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (cam == 0) safeSet(rb, CaptureRequest.FLASH_MODE, (torchByReq && torchOn) ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
         if (reqStage < 2) safeSet(rb, CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<Integer>(fpsRange[cam][0], fpsRange[cam][1]));
         float z = reqZoom(cam);
-        if (Build.VERSION.SDK_INT >= 30) safeSet(rb, CaptureRequest.CONTROL_ZOOM_RATIO, z);
-        else {
+        // 注意：Camera2 规定设置了 CONTROL_ZOOM_RATIO 后 SCALER_CROP_REGION 会被忽略，所以两者不能混用：
+        //  - 没超过硬件上限：用 CONTROL_ZOOM_RATIO（画质最好）；
+        //  - 超过硬件上限（设置里的变焦扩充）：不写 CONTROL_ZOOM_RATIO，整段倍数都用 SCALER_CROP_REGION 完成。
+        boolean overHw = Build.VERSION.SDK_INT >= 30 && z > hwMax[cam] + 0.0001f;
+        if (Build.VERSION.SDK_INT >= 30 && !overHw) safeSet(rb, CaptureRequest.CONTROL_ZOOM_RATIO, Math.max(zoomMin[cam], z));
+        if (overHw || Build.VERSION.SDK_INT < 30) {
             Rect a = activeArr[cam];
             if (a != null) {
                 float zz = Math.max(1f, z);
