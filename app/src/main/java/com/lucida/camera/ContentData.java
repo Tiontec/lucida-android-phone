@@ -18,6 +18,12 @@ final class ContentData {
         List<UpdateEntry> all = new ArrayList<UpdateEntry>();
         {
             List<UpdateItem> it = new ArrayList<UpdateItem>();
+            it.add(new UpdateItem("变焦倍率扩充生效", "在设置里改了「变焦倍率扩充」，变焦条和转盘马上跟着变（之前要切一次双摄才生效），单摄也能滑到 100×。"));
+            it.add(new UpdateItem("片门全开分开", "单摄的片门全开在「取景与拍摄」里单独一个开关；双摄的片门全开在「双摄设置」里。两者互不影响。"));
+            all.add(new UpdateEntry("2.7.1", "2026-11-26", "new", it));
+        }
+        {
+            List<UpdateItem> it = new ArrayList<UpdateItem>();
             it.add(new UpdateItem("相册导入", "相册右上角「导入」现在是从系统相册或文件里选照片和视频（可多选），复制进澄影自己的存储，并出现在澄影相册里（带橙框）。之前的「导入」是把本次拍的照片导入澄影，已经改掉。"));
             all.add(new UpdateEntry("2.7.0", "2026-11-26", "new", it));
         }

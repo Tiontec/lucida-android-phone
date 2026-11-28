@@ -211,7 +211,7 @@ final class SettingsPageView extends FrameLayout {
         holder[0] = DualUi.seg(c, labels, SettingsRegistry.selectedIndex(st, it), new DualUi.IntCb() {
             @Override public void on(int i) {
                 if (i < 0 || i >= it.options.size()) return;
-                if (it.id.equals("ratio") && st.bool("full")) {         // 片门全开时画幅固定 4:3：不改，选中态退回去
+                if (it.id.equals("ratio") && st.bool(st.bool("dualOn") ? "full" : "sFull")) {         // 片门全开时画幅固定 4:3：不改，选中态退回去
                     DualUi.setSeg(holder[0], SettingsRegistry.selectedIndex(st, it));
                     owner.toast("「片门全开」开着时画幅固定为 4:3，关掉后才能改");
                     return;

@@ -477,7 +477,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
             prefs.heif = i == 1; prefs.save(); syncSpecPill(); } });
         segRatio = DualUi.seg(this, new String[]{"16:9", "4:3", "1:1"}, prefs.ratio, new DualUi.IntCb() { @Override public void on(int i) {
             if (i == prefs.ratio) return;
-            if (prefs.fullGate) { DualUi.setSeg(segRatio, prefs.ratio); say("「片门全开」开着时画幅固定为 4:3，关掉后才能改"); return; }
+            if (fullNow()) { DualUi.setSeg(segRatio, prefs.ratio); say("「片门全开」开着时画幅固定为 4:3，关掉后才能改"); return; }
             if (recording || clipping) { DualUi.setSeg(segRatio, prefs.ratio); say("录像 / 实况拍摄中不能改画幅"); return; }
             prefs.ratio = i; prefs.save(); relayout(); } });
         String[] names = {"分辨率", "帧率", "照片格式", "画幅"};
@@ -507,7 +507,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         int stageTop = top + dp(54);
         int avail = H - stageTop - barH;
         int sw = W, sh;
-        if (prefs.fullGate || prefs.ratio == 1) { sh = Math.min(W * 4 / 3, avail); sw = sh * 3 / 4; }     // 片门全开固定 3:4
+        if (fullNow() || prefs.ratio == 1) { sh = Math.min(W * 4 / 3, avail); sw = sh * 3 / 4; }     // 片门全开固定 3:4
         else if (prefs.ratio == 2) { sh = Math.min(W, avail); sw = sh; }
         else sh = Math.min(W * 16 / 9, avail);
         stageW = sw; stageH = sh; stageX = (W - sw) / 2; stageY = stageTop;
@@ -620,7 +620,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         if (effTier > DualPlan.startTier(prefs.res)) r = new String[]{"4K", "2.8K", "1080p", "720p"}[Math.max(0, Math.min(3, effTier))] + "↓";
         if (effFps < f) { f = effFps; r = r.endsWith("↓") ? r : r + "↓"; }
         String fmt = prefs.heif && Build.VERSION.SDK_INT >= 34 ? "HEIF" : "JPEG";
-        String gate = prefs.fullGate ? "片门" : "";
+        String gate = fullNow() ? "片门" : "";
         String fl = new String[]{"", "⚡自动", "⚡开"}[prefs.flash], tm = prefs.timerSec > 0 ? "⏱" + prefs.timerSec + "s" : "";
         // 依次试：完整 → 紧凑（去空格）→ 缩小字号 → 去掉闪光 / 倒计时 → 去掉格式；总之不能盖住右边的按钮
         String[] cands = {
@@ -713,6 +713,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         final DualSettingsView v = new DualSettingsView(this, prefs, new DualSettingsView.Host() {
             @Override public void onClose() { closeOverlay(); }
             @Override public void onChanged(boolean reconfigure) {
+        refreshZoomRange();
                 state.mirrorFront = prefs.mirror; if (gl != null) gl.borderMode = prefs.pipBorder;
                 gridView.setVisibility(prefs.gridLines ? View.VISIBLE : View.GONE);
                 syncLevel();
@@ -1270,6 +1271,16 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
         say(on ? "正在开启双摄…（这台手机不支持时会自动退回单摄）" : "已切换到单摄");
     }
 
+    /** 当前模式的片门全开：双摄读「双摄设置」的，单摄读「取景与拍摄」里单摄的 */
+    private boolean fullNow() { return prefs.dualOn ? prefs.fullGate : new SettingsStore(prefs).bool("sFull"); }
+
+    /** 变焦倍率扩充改了：重新算两颗镜头的变焦上限，并刷新变焦条 */
+    private void refreshZoomRange() {
+        float setMax = (float) Math.max(30, new SettingsStore(prefs).zoomRange());
+        for (int c = 0; c < 2; c++) zoomMax[c] = Math.max(zoomMin[c], c == 0 ? setMax : Math.min(setMax, 10f));
+        syncDial();
+    }
+
     /** 变焦放大取景框：按当前变焦和设置里的档位刷新 */
     private void updateZoomMini() {
         if (zoomMini == null) return;
@@ -1300,7 +1311,7 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
                 sizes[i][0] = all[i].getWidth(); sizes[i][1] = all[i].getHeight();
                 dur[i] = m.getOutputMinFrameDuration(SurfaceTexture.class, all[i]);
             }
-            DualPlan.SizePick pk = DualPlan.pickSize(sizes, dur, prefs.fullGate, DualPlan.cap(effTier), effFps);
+            DualPlan.SizePick pk = DualPlan.pickSize(sizes, dur, fullNow(), DualPlan.cap(effTier), effFps);
             int fps = pk.fpsOk ? effFps : Math.max(15, (int) Math.floor(pk.maxFps));
             Range<Integer>[] rs = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             int lo = Math.min(fps, 30), hi = fps;
@@ -1317,12 +1328,12 @@ public class DualCameraActivity extends Activity implements SurfaceHolder.Callba
 
     /** 成品尺寸：和取景框同比例（片门全开 3:4），长边按分辨率档，不超过流的长边 */
     private void applyOutputSize() {
-        float asp = prefs.fullGate ? 0.75f : Math.min(1f, Math.max(0.4f, stageW / (float) Math.max(1, stageH)));
-        int tierLong = prefs.res >= 2160 ? (prefs.fullGate ? 2880 : 3840) : prefs.res >= 1080 ? 1920 : 1280;
+        float asp = fullNow() ? 0.75f : Math.min(1f, Math.max(0.4f, stageW / (float) Math.max(1, stageH)));
+        int tierLong = prefs.res >= 2160 ? (fullNow() ? 2880 : 3840) : prefs.res >= 1080 ? 1920 : 1280;
         int rc = dual ? 0 : mainCam();
         int streamLong = Math.max(streamW[rc], streamH[rc]);
         int lg = Math.min(tierLong, Math.max(480, streamLong));
-        if (asp > 0.5625f && !prefs.fullGate) lg = Math.min(lg, Math.max(480, Math.round(Math.min(streamW[rc], streamH[rc]) / asp)));
+        if (asp > 0.5625f && !fullNow()) lg = Math.min(lg, Math.max(480, Math.round(Math.min(streamW[rc], streamH[rc]) / asp)));
         recH = lg & ~1; recW = Math.round(lg * asp) & ~1;
     }
 

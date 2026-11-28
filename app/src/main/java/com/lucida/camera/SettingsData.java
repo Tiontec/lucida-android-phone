@@ -104,6 +104,15 @@ final class SettingsData {
             List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
             {
                 List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
+                List<String> notes = new ArrayList<String>();
+                items.add(new SettingsRegistry.Item("sFull", "片门全开（单摄）", "单摄时用 4:3 整块传感器规格，成品 3:4。双摄的片门全开在「双摄设置」里，两者互不影响", SettingsRegistry.T_SWITCH, SettingsRegistry.SC_SINGLE, SettingsRegistry.S_LIVE, "0", opts, notes, "", false, true, "rectangle.expand.vertical", 0, 0));
+            }
+            groups.add(new SettingsRegistry.Group("", "", items));
+        }
+        {
+            List<SettingsRegistry.Item> items = new ArrayList<SettingsRegistry.Item>();
+            {
+                List<SettingsRegistry.Option> opts = new ArrayList<SettingsRegistry.Option>();
                 opts.add(new SettingsRegistry.Option("0", "关", "", "关", false));
                 opts.add(new SettingsRegistry.Option("1", "自动", "", "自动", false));
                 opts.add(new SettingsRegistry.Option("2", "开", "", "开", false));
